@@ -8,13 +8,14 @@ import { menu, saveKey, setupHomeroom, tab } from './helpers';
 /**
  * 패키지된 앱 + 실제 AI 세 곳(Gemini API 키, Claude Code, Codex) 전체 흐름 시험(선택).
  * 가상의 학생 3명에게 제공자를 하나씩 맡겨 관찰 입력 → 후보 생성 → 조합 → 취합 → 최종 윤문 → 채택 → 검토 완료 →
- * 앱 다시 열기(저장 유지) → 작업별 출력 XLSX 저장까지 확인한다. Claude·ChatGPT는 이 PC의 실제 CLI 로그인을 그대로 쓴다(로그아웃하지 않음).
+ * 앱 다시 열기(저장 유지) → 작업별 출력 XLSX·HWPX 저장 → 이동용·자동 백업 만들기 → 새 PC(빈 자료)에서 백업 복원까지 확인한다. Claude·ChatGPT는 이 PC의 실제 CLI 로그인을 그대로 쓴다(로그아웃하지 않음).
  * Gemini 키는 저장소 밖 개발용 .env의 GEMINI_API_KEY를 읽어 앱에 넣기만 하고 출력하지 않는다.
  * 실행: LIVE_FLOW=1 npx playwright test tests/e2e/packaged-flow.live.spec.ts  (LIVE_FLOW_OUT=결과 JSON 경로)
  */
 const { productName } = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8')).build as { productName: string };
 const exe = path.resolve(__dirname, `../../release/win-unpacked/${productName}.exe`);
-const envFile = path.resolve(__dirname, '../../../../.env');
+// 개발용 키 파일: MITGEUL_ENV_FILE 또는 저장소 루트의 .env(저장소에는 올리지 않음)
+const envFile = process.env.MITGEUL_ENV_FILE ? path.resolve(process.env.MITGEUL_ENV_FILE) : path.resolve(__dirname, '../../../.env');
 const geminiKey = fs.existsSync(envFile) ? (fs.readFileSync(envFile, 'utf8').match(/^GEMINI_API_KEY=(.+)$/m)?.[1] ?? '').trim() : '';
 test.skip(!process.env.LIVE_FLOW || !fs.existsSync(exe) || !geminiKey, 'LIVE_FLOW=1, 패키지, 개발용 .env의 GEMINI_API_KEY가 필요함');
 
@@ -24,6 +25,7 @@ const STUDENTS = [
   { name: '한서윤', provider: 'gemini', obs: ['한서윤이 학급 회의에서 정한 청소 당번 규칙을 스스로 확인하고, 당번을 잊은 친구에게 차분히 알려 줌', '모둠 토의에서 의견이 갈리자 한서윤이 두 의견을 칠판에 나눠 적고 공통점을 찾아 정리함'] },
 ] as const;
 type Prov = (typeof STUDENTS)[number]['provider'];
+const BACKUP_PW = 'mitgeul-backup-test-2026';
 
 interface Result { student: string; provider: Prov; model: string; candidates: string[]; finalText: string; chars: number; ms: { candidates: number; polish: number }; retries: number }
 
@@ -78,7 +80,9 @@ async function useProvider(page: Page, p: Prov) {
   await tab(page, 'AI 연결');
   await page.locator('select').filter({ has: page.locator('option[value="anthropic"]') }).selectOption(p);
   if (p !== 'gemini') await expect(page.getByTestId('cli-status')).toContainText('로그인됨', { timeout: 30_000 });
-  await expect(page.getByText(/연결 준비/)).toBeVisible({ timeout: 30_000 });
+  // 이전 제공자의 "연결 준비"에 걸리지 않게 고른 제공자 이름까지 확인한다
+  const label = { gemini: 'Google Gemini (API 키)', openai: 'ChatGPT (Codex CLI 구독)', anthropic: 'Claude (Claude Code 구독)' }[p];
+  await expect(page.locator('.conn-pill')).toHaveText(`${label} 연결 준비`, { timeout: 30_000 });
   // LIVE_FLOW_GEMINI_MODEL=lite면 Flash가 혼잡할 때 쓰는 가벼운 모델(이름이 -flash-lite로 끝나는 최신 모델)을 골라 저장한다
   if (p === 'gemini' && process.env.LIVE_FLOW_GEMINI_MODEL === 'lite') {
     await page.getByRole('button', { name: '모델 목록 불러오기' }).click();
@@ -98,11 +102,14 @@ async function useProvider(page: Page, p: Prov) {
 async function writeOne(page: Page, s: (typeof STUDENTS)[number]): Promise<Result> {
   await useProvider(page, s.provider);
   await menu(page, /관찰 기록 및 초안 작성/);
+  // 영역을 먼저 고르고 화면이 다시 그려진 뒤 학생을 고른다(연달아 누르면 앞 화면 갱신과 겹친다)
+  await page.locator('.sel-grid').getByRole('button', { name: '행특' }).click();
+  await expect(page.locator('.sel-grid').getByRole('button', { name: '행특' })).toHaveClass(/\bon\b/);
+  await expect(page.locator('.record-head h2')).toBeVisible();
   const stuSel = page.getByLabel('학생', { exact: true });
   const value = await stuSel.evaluate((el: HTMLSelectElement, name) => [...el.options].find((o) => o.text.includes(name))?.value ?? '', s.name);
   await stuSel.selectOption(value);
-  await page.locator('.sel-grid').getByRole('button', { name: '행특' }).click();
-  await expect(page.locator('.record-head h2')).toContainText(s.name);
+  await expect(page.locator('.record-head h2')).toContainText(s.name, { timeout: 15_000 });
   await tab(page, '관찰 기록');
   await page.getByLabel('규칙 준수 선택').check();
   await page.getByLabel('경청·의견 조율 선택').check();
@@ -149,7 +156,7 @@ async function writeOne(page: Page, s: (typeof STUDENTS)[number]): Promise<Resul
   return { student: s.name, provider: s.provider, model, candidates, finalText, chars: finalText.length, ms: { candidates: candMs, polish: polishMs }, retries: candRetry + polishRetry };
 }
 
-async function exportXlsx(app: ElectronApplication, page: Page, file: string) {
+async function exportFile(app: ElectronApplication, page: Page, file: string, format: 'XLSX' | 'HWPX') {
   await app.evaluate(({ dialog }, f) => {
     (dialog as any).showSaveDialog = async () => ({ canceled: false, filePath: f });
   }, file);
@@ -157,14 +164,43 @@ async function exportXlsx(app: ElectronApplication, page: Page, file: string) {
   await tab(page, '작업별 출력');
   await page.locator('.content select').nth(1).selectOption('behavior');
   await expect(page.locator('table.table tbody tr')).toHaveCount(3);
-  await page.getByRole('button', { name: 'XLSX 저장' }).click();
-  await expect.poll(() => fs.existsSync(file), { timeout: 30_000 }).toBe(true);
+  await page.getByRole('button', { name: `${format} 저장` }).click();
+  await expect.poll(() => fs.existsSync(file) && fs.statSync(file).size > 0, { timeout: 60_000 }).toBe(true);
 }
 
-test('실제 Gemini·Claude·ChatGPT로 학생 3명 행특 작성 → 저장 유지 → XLSX 출력', async () => {
+/** 압축 파일(XLSX·HWPX) 안 XML의 글자만 모은다. */
+async function zipText(file: string, pattern: RegExp) {
+  const zip = await JSZip.loadAsync(fs.readFileSync(file));
+  const xml = (await Promise.all(Object.keys(zip.files).filter((f) => pattern.test(f)).map((f) => zip.file(f)!.async('string')))).join('\n');
+  return xml.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+}
+
+/** 작성 현황에서 세 학생이 모두 검토 완료인지 */
+async function expectAllReviewed(page: Page) {
+  await menu(page, /작성 내용 확인 및 출력/);
+  await page.locator('.cell', { hasText: '행특 · 1학기' }).click();
+  for (const s of STUDENTS) await expect(page.locator('.stu-row', { hasText: s.name })).toContainText(/검토 완료 · \d+자\(\d+Byte\)/);
+}
+
+async function backupTab(page: Page) {
+  await menu(page, /기본설정/);
+  await tab(page, '백업·보안');
+  await expect(page.locator('.backup-panel')).not.toContainText('백업 폴더를 확인하는 중');
+}
+
+async function fillPassword(page: Page, pw: string, twice: boolean) {
+  const inputs = page.locator('.modal-back input[type=password]');
+  await inputs.nth(0).fill(pw);
+  if (twice) await inputs.nth(1).fill(pw);
+  await page.locator('.modal-back').getByRole('button', { name: '확인' }).click();
+}
+
+test('실제 Gemini·Claude·ChatGPT로 학생 3명 행특 작성 → 저장 유지 → XLSX·HWPX 출력 → 백업·복원', async () => {
   test.setTimeout(1_800_000);
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sgb-live-flow-'));
+  const userData2 = fs.mkdtempSync(path.join(os.tmpdir(), 'sgb-live-restore-'));
   const xlsx = path.join(userData, '행특_출력.xlsx');
+  const hwpx = path.join(userData, '행특_출력.hwpx');
   const results: Result[] = [];
   let { app, page, errors } = await launch(userData);
   try {
@@ -182,22 +218,74 @@ test('실제 Gemini·Claude·ChatGPT로 학생 3명 행특 작성 → 저장 유
     // 앱을 다시 열어도 최종 본문·검토 상태가 남아 있고, XLSX에 그대로 나간다
     ({ app, page, errors } = await launch(userData));
     await expect(page.locator('nav.menu')).toBeVisible({ timeout: 60_000 });
-    await menu(page, /작성 내용 확인 및 출력/);
-    await page.locator('.cell', { hasText: '행특 · 1학기' }).click();
-    for (const s of STUDENTS) await expect(page.locator('.stu-row', { hasText: s.name })).toContainText(/검토 완료 · \d+자\(\d+Byte\)/);
-    await exportXlsx(app, page, xlsx);
-    const zip = await JSZip.loadAsync(fs.readFileSync(xlsx));
-    const xml = (await Promise.all(Object.keys(zip.files).filter((f) => /sharedStrings|sheet\d*\.xml$/.test(f)).map((f) => zip.file(f)!.async('string')))).join('\n');
-    const plain = xml.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+    await expectAllReviewed(page);
+    await exportFile(app, page, xlsx, 'XLSX');
+    const xlsxText = await zipText(xlsx, /sharedStrings|sheet\d*\.xml$/);
     for (const r of results) {
-      expect(plain).toContain(r.student);
-      expect(plain).toContain(r.finalText.slice(0, 40));
+      expect(xlsxText).toContain(r.student);
+      expect(xlsxText).toContain(r.finalText.slice(0, 40));
     }
     console.log('xlsx', fs.statSync(xlsx).size, 'Byte, 학생 3명 최종 본문 포함');
+
+    // HWPX: 한글 문서(압축 XML)에 학생 3명의 최종 본문이 들어간다
+    await exportFile(app, page, hwpx, 'HWPX');
+    const hwpxZip = await JSZip.loadAsync(fs.readFileSync(hwpx));
+    const hwpxFiles = Object.keys(hwpxZip.files);
+    console.log('hwpx files:', hwpxFiles.join(', '));
+    expect(hwpxFiles).toContain('mimetype');
+    expect((await hwpxZip.file('mimetype')!.async('string')).trim()).toBe('application/hwp+zip');
+    const hwpxText = (await zipText(hwpx, /^Contents\/section\d+\.xml$/)).replace(/\s+/g, '');
+    for (const r of results) expect(hwpxText).toContain(r.finalText.slice(0, 40).replace(/\s+/g, ''));
+    console.log('hwpx', fs.statSync(hwpx).size, 'Byte, 학생 3명 최종 본문 포함');
+
+    // 백업: 이동용(비밀번호) 백업과 자동 백업을 만든다
+    await backupTab(page);
+    await page.getByRole('button', { name: '이동용 백업 만들기' }).click();
+    await fillPassword(page, BACKUP_PW, true);
+    await expect(page.getByText(/이동용 백업을 백업 폴더에 저장했습니다/)).toBeVisible({ timeout: 30_000 });
+    await page.locator('.content').getByRole('button', { name: '지금 자동 백업' }).click();
+    await expect(page.locator('.backup-list')).toContainText('이동용(비밀번호)');
+    await expect(page.locator('.backup-list')).toContainText('자동(이 PC 전용)');
+    const backupDir = path.join(userData, 'backups');
+    const moveFile = fs.readdirSync(backupDir).filter((f) => f.endsWith('.sgbak')).map((f) => path.join(backupDir, f))[0]!;
+    const autoFiles = fs.readdirSync(backupDir).filter((f) => f.endsWith('.sgauto'));
+    expect(moveFile).toBeTruthy();
+    expect(autoFiles.length).toBeGreaterThan(0);
+    // 백업 파일은 암호화되어 학생 이름·본문이 그대로 보이지 않는다
+    const moveRaw = fs.readFileSync(moveFile, 'utf8');
+    for (const r of results) {
+      expect(moveRaw).not.toContain(r.student);
+      expect(moveRaw).not.toContain(r.finalText.slice(0, 20));
+    }
+    console.log('backup', path.basename(moveFile), fs.statSync(moveFile).size, 'Byte · 자동', autoFiles.join(', '));
+    expect(errors).toEqual([]);
+    await app.close();
+
+    // 새 PC(빈 자료)에서 이동용 백업 복원: 틀린 비밀번호는 거절하고, 맞는 비밀번호면 3명 검토 완료 본문이 그대로 돌아온다
+    ({ app, page, errors } = await launch(userData2));
+    await expect(page.getByText('처음 사용하시나요?')).toBeVisible({ timeout: 60_000 });
+    await app.evaluate(({ dialog }, f) => {
+      (dialog as any).showOpenDialog = async () => ({ canceled: false, filePaths: [f] });
+    }, moveFile);
+    await backupTab(page);
+    await page.getByRole('button', { name: '다른 위치에서 복원' }).click();
+    await fillPassword(page, 'wrong-password-1234', false);
+    await expect(page.locator('#toast.err.on')).toBeVisible({ timeout: 30_000 });
+    console.log('wrong password:', (await page.locator('#toast').innerText()).replace(/\n+/g, ' '));
+    await page.getByRole('button', { name: '다른 위치에서 복원' }).click();
+    await fillPassword(page, BACKUP_PW, false);
+    await expect(page.getByText(/복원했습니다/).first()).toBeVisible({ timeout: 30_000 });
+    await expectAllReviewed(page);
+    const restoredXlsx = path.join(userData2, '복원_행특_출력.xlsx');
+    await exportFile(app, page, restoredXlsx, 'XLSX');
+    const restoredText = await zipText(restoredXlsx, /sharedStrings|sheet\d*\.xml$/);
+    for (const r of results) expect(restoredText).toContain(r.finalText.slice(0, 40));
+    console.log('restore ok: 새 자료에서 학생 3명 검토 완료 본문 복원·출력');
     expect(errors).toEqual([]);
   } finally {
     if (process.env.LIVE_FLOW_OUT) fs.writeFileSync(process.env.LIVE_FLOW_OUT, JSON.stringify(results, null, 2), 'utf8');
     await app.close().catch(() => {});
-    fs.rmSync(userData, { recursive: true, force: true });
+    if (process.env.LIVE_FLOW_KEEP) console.log('kept:', userData, userData2);
+    else for (const d of [userData, userData2]) fs.rmSync(d, { recursive: true, force: true });
   }
 });

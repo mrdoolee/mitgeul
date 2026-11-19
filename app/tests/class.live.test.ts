@@ -15,7 +15,8 @@ import { baseData } from './fixtures';
  * 실행: LIVE_CLASS=1 LIVE_PROVIDER=gemini|anthropic|openai [LIVE_AREAS=behavior,subject,club] npx vitest run tests/class.live.test.ts
  */
 function envKey(name: string): string {
-  const p = path.resolve(__dirname, '../../../.env');
+  // 개발용 키 파일: MITGEUL_ENV_FILE 또는 저장소 루트의 .env(저장소에는 올리지 않음)
+  const p = process.env.MITGEUL_ENV_FILE ? path.resolve(process.env.MITGEUL_ENV_FILE) : path.resolve(__dirname, '../../.env');
   if (!fs.existsSync(p)) return '';
   const line = fs.readFileSync(p, 'utf8').split(/\r?\n/).find((l) => l.startsWith(`${name}=`));
   return line ? line.slice(name.length + 1).trim() : '';
