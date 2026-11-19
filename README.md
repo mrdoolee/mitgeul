@@ -3,6 +3,8 @@
 생활기록부 초안 작성 도우미. 학생에 대한 관찰 내용을 짧게 넣으면 AI가 후보 문장을 제안하고, 선생님이 고르고 다듬어 중·고등학교 생활기록부 초안을 쓰는 Windows 앱입니다.
 
 - 버전: 0.1.0
+- 소개·내려받기: https://mitgeul-trdoolee.vercel.app
+- 실행 파일: [GitHub 릴리스](https://github.com/mrdoolee/mitgeul/releases/latest)에서 `MITGEUL-0.1.0-portable.exe`를 내려받습니다.
 - 실행 환경: Windows 64비트, 설치 없는 portable 실행 파일(`MITGEUL-0.1.0-portable.exe`)
 - 대상: 2026학년도 중학교·고등학교 학교생활기록부
 

@@ -22,6 +22,8 @@ import {
   DOWNLOAD_FILE,
   DOWNLOAD_URL,
   PRIVACY_URL,
+  RELEASES_URL,
+  REPO_URL,
 } from "@/site";
 
 const wrap = "mx-auto max-w-6xl px-4 sm:px-6";
@@ -260,6 +262,12 @@ export function DownloadSection() {
               개인정보 처리방침 읽기
             </a>
           </div>
+          <p className="mt-4 text-[13.5px] leading-[1.7] text-ink-2">
+            지난 버전과 바뀐 내용은{" "}
+            <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" className="font-medium text-accent-foreground underline underline-offset-4">GitHub 릴리스</a>에서,
+            소스 코드는{" "}
+            <a href={REPO_URL} target="_blank" rel="noopener noreferrer" className="font-medium text-accent-foreground underline underline-offset-4">GitHub 저장소</a>에서 볼 수 있습니다(MIT License).
+          </p>
         </div>
         <dl className="grid gap-5 rounded-xl border bg-white p-6 text-[14.5px]">
           <div className="flex gap-3">
@@ -319,6 +327,9 @@ export function SiteFooter() {
           <span>{APP_TAGLINE}</span>
         </span>
         <span className="sm:ml-auto">버전 {APP_VERSION}</span>
+        <a href={REPO_URL} target="_blank" rel="noopener noreferrer" className="text-white/80 underline-offset-4 hover:underline">
+          GitHub
+        </a>
         <a href={PRIVACY_URL} className="text-white/80 underline-offset-4 hover:underline">
           개인정보 처리방침
         </a>
