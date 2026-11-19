@@ -1,0 +1,18 @@
+import fs from 'node:fs';
+import JSZip from 'jszip';
+import init, { HwpDocument } from '@rhwp/core';
+await init({ module_or_path: fs.readFileSync('node_modules/@rhwp/core/rhwp_bg.wasm') });
+const doc = HwpDocument.createEmpty();
+doc.createBlankDocument();
+const T = JSON.parse(doc.createTableEx(JSON.stringify({ sectionIdx: 0, paraIdx: 0, charOffset: 0, rowCount: 2, colCount: 5, colWidths: [2800, 2800, 5600, 27300, 4000] }))); const C = T.controlIdx;
+for (let i = 0; i < 5; i++) console.log(i, doc.getCellInfo(0, 0, C, i));
+const before = JSON.parse(doc.getCellInfo(0, 0, 0, 0));
+const W = [3000, 3000, 6000, 26000, 4520];
+const sum0 = [0,1,2,3,4].map(i => JSON.parse(doc.getCellInfo(0,0,C,i)).width);
+console.log('sum', sum0.reduce((a,b)=>a+b));
+const deltas = W.map((w, i) => ({ cellIdx: i, widthDelta: w - sum0[i] }));
+console.log(doc.resizeTableCells(0, 0, C, JSON.stringify(deltas)));
+for (let i = 0; i < 10; i++) console.log('after', i, JSON.parse(doc.getCellInfo(0, 0, C, i)).width);
+const z = await JSZip.loadAsync(doc.exportHwpx());
+const sec = await z.file('Contents/section0.xml').async('string');
+console.log([...sec.matchAll(/cellSz width="(\d+)"/g)].map(m=>m[1]).join(','));

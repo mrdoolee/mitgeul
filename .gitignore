@@ -1,0 +1,17 @@
+.env
+.env.*
+node_modules/
+*.log
+app/dist/
+app/out/
+app/release/
+app/.vite/
+app/test-results/
+app/playwright-report/
+app/spike/out/
+app/resources/wasm/
+app/resources/licenses/*-notices/
+app/resources/THIRD_PARTY_NOTICES.txt
+app/.dorms-check/
+app/dorms-check.config.json
+landing/dist/

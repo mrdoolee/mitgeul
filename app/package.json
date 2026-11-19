@@ -1,0 +1,83 @@
+{
+  "name": "mitgeul",
+  "productName": "MITGEUL",
+  "version": "0.1.0",
+  "description": "밑글 — 생활기록부 초안 작성 도우미",
+  "private": true,
+  "author": "MITGEUL",
+  "license": "MIT",
+  "main": "dist/main/main.js",
+  "type": "commonjs",
+  "devDependencies": {
+    "@playwright/test": "1.56.1",
+    "@rhwp/core": "0.9.0",
+    "@types/node": "24.10.1",
+    "electron": "45.3.2",
+    "electron-builder": "26.18.0",
+    "esbuild": "0.25.12",
+    "jszip": "3.10.2",
+    "typescript": "5.9.3",
+    "vite": "7.2.4",
+    "vitest": "4.0.10",
+    "xlsx-js-style": "1.2.0",
+    "zod": "4.1.12"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true,
+    "electron@45.3.2": true
+  },
+  "scripts": {
+    "build": "node scripts/build-rubrics.mjs && node scripts/build.mjs && node scripts/notices.mjs",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "start": "npm run build && electron .",
+    "dist": "npm run build && electron-builder --win portable --x64",
+    "test:live": "node -e \"process.env.LIVE=1;require('child_process').execSync('npx vitest run',{stdio:'inherit',env:process.env})\""
+  },
+  "build": {
+    "appId": "kr.mitgeul.app",
+    "productName": "MITGEUL",
+    "copyright": "MITGEUL",
+    "directories": {
+      "output": "release"
+    },
+    "asar": true,
+    "files": [
+      "package.json",
+      "dist/main/**",
+      "dist/preload/**",
+      "dist/renderer/**",
+      "resources/**",
+      "!**/*.map"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "MITGEUL-${version}-portable.exe"
+    },
+    "npmRebuild": false,
+    "nodeGypRebuild": false,
+    "asarUnpack": [
+      "resources/THIRD_PARTY_NOTICES.txt",
+      "resources/licenses/**"
+    ],
+    "electronFuses": {
+      "runAsNode": false,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": true,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true
+    }
+  }
+}

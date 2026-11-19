@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+/* 앱(origin/app/src/renderer/styles.css)의 토큰을 따른다: 남색 사이드바, 회청색 바탕, 파란 강조, 흰 카드. */
+:root {
+  --navy: #12304f;
+  --navy-2: #1b3f66;
+  --canvas: #f2f5f8;
+  --blue: #3b7dd8;
+  --blue-strong: #2f68b3;
+  --ink: #181c1e;
+  --ink-2: #43474e;
+  --ink-3: #5f646c;
+  --line: #e2e8f0;
+  --teal: #22c1a3;
+
+  --background: var(--canvas);
+  --foreground: var(--ink);
+  --card: #ffffff;
+  --primary: var(--blue);
+  --primary-foreground: #ffffff;
+  --secondary: #e4ebf3;
+  --secondary-foreground: var(--navy);
+  --muted: #e9eef4;
+  --muted-foreground: var(--ink-3);
+  --accent: #e7eff9;
+  --accent-foreground: var(--blue-strong);
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --border: var(--line);
+  --input: #cfd8e3;
+  --ring: var(--blue);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+  --color-navy: var(--navy);
+  --color-navy-2: var(--navy-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-blue-strong: var(--blue-strong);
+  --color-teal: var(--teal);
+  --font-sans: "IBM Plex Sans KR", "Malgun Gothic", "맑은 고딕", "Apple SD Gothic Neo", system-ui, sans-serif;
+  --font-serif: "Gowun Batang", "Batang", "바탕", serif;
+}
+
+@layer base {
+  * { border-color: var(--border); }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+  }
+  ::selection { background: rgba(59, 125, 216, 0.22); }
+  h1, h2, h3 { text-wrap: balance; }
+  p, dd, li { text-wrap: pretty; }
+  :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
