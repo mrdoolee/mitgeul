@@ -13,5 +13,6 @@ app/resources/wasm/
 app/resources/licenses/*-notices/
 app/resources/THIRD_PARTY_NOTICES.txt
 app/.dorms-check/
+.dorms-check/
 app/dorms-check.config.json
 landing/dist/
