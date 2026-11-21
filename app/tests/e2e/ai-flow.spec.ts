@@ -236,18 +236,40 @@ test('가짜 Claude Code CLI로 후보 생성 → 복수·부분 조합 → 취�
   await expect(finalTa).toHaveValue('학급 규칙을 스스로 지키며 친구 말을 끝까지 들음. 교사가 고친 문장임.');
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, '11b-final-repolish.png'), fullPage: true });
   const proposal = (await page.getByTestId('final-repolish-result').textContent()) ?? '';
-  await page.getByRole('button', { name: '재윤문 제안 채택' }).click();
-  await expect(page.getByText('재윤문 제안을 최종 본문으로 옮겼습니다.')).toBeVisible();
-  await expect(finalTa).toHaveValue(proposal);
-  await expect(page.getByText('재윤문 제안을 최종 본문에 채택했습니다.')).toBeVisible();
   // 최종 윤문 탭은 재윤문 제안을 초안 윤문으로 보여 주지 않는다
   await tab(page, '최종 윤문');
   await expect(page.getByText('최종 본문·검토 탭에서 받은 재윤문 제안이 있습니다.')).toBeVisible();
   await tab(page, /최종 본문/);
+  await page.getByRole('button', { name: '재윤문 제안 채택' }).click();
+  await expect(page.getByText('재윤문 제안을 최종 본문으로 옮겼습니다.')).toBeVisible();
+  await expect(finalTa).toHaveValue(proposal);
+  // 채택한 제안은 닫힌다(채택 뒤 본문을 고쳐도 옛 제안이 '요청 뒤 바뀜'으로 다시 나오지 않게)
+  await expect(page.getByTestId('final-repolish-result')).toHaveCount(0);
   await page.locator('.card.final').getByLabel(/관찰 근거와 사실을 확인/).check();
   await page.locator('.card.final').getByRole('button', { name: '검토 완료' }).click();
   await expect(page.getByRole('button', { name: '최종 본문 복사' })).toBeEnabled();
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, '12-polish-review.png'), fullPage: true });
+  // 검토 완료 뒤 다시 고치면 입력란을 벗어나지 않아도 합산 Byte·저장·검토 상태가 바로 바뀐다
+  const aggTop = page.locator('.card.final .agg-top b');
+  const aggBefore = (await aggTop.textContent()) ?? '';
+  await finalTa.focus();
+  await page.keyboard.press('End');
+  await page.keyboard.type(' 덧붙임.');
+  await expect(aggTop).not.toHaveText(aggBefore);
+  await expect(page.getByTestId('final-save-state')).toHaveText('저장됨');
+  await expect(page.getByText('검토 후 관련 내용이 바뀌어')).toBeVisible();
+  await expect(page.getByRole('button', { name: '최종 본문 복사' })).toBeDisabled();
+  await expect(finalTa).toBeFocused();
+  // 저장 단추는 언제든 누를 수 있다
+  await page.keyboard.type(' 한 번 더.');
+  await expect(page.getByTestId('final-save')).toBeEnabled();
+  await page.getByTestId('final-save').click();
+  await expect(page.getByText('최종 본문을 저장했습니다.')).toBeVisible();
+  await expect(finalTa).toHaveValue(/덧붙임\. 한 번 더\.$/);
+  await expect(page.getByTestId('final-save-state')).toHaveText('저장됨');
+  await page.locator('.card.final').getByLabel(/관찰 근거와 사실을 확인/).check();
+  await page.locator('.card.final').getByRole('button', { name: '검토 완료' }).click();
+  await expect(page.getByRole('button', { name: '최종 본문 복사' })).toBeEnabled();
   // 항목별 조합 전체 삭제(확인 창 수락)
   await tab(page, /항목별 조합/);
   await page.evaluate(() => (window.confirm = () => true));

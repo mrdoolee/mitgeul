@@ -555,6 +555,8 @@ export const ACTIONS = {
       const r = rec(d, p.recordId);
       if (!r.polish) throw new ActionError('윤문 결과가 없습니다.');
       r.finalText = r.polish.resultText;
+      // 최종 본문 재윤문은 채택하면 끝난 제안이다. 남겨 두면 채택 뒤 본문을 고칠 때 옛 제안이 '요청 뒤 바뀜'으로 다시 보인다.
+      if (r.polish.basis === 'final') r.polish = null;
       touch(r);
     },
   },

@@ -646,20 +646,76 @@ function toFinalTab() {
 }
 
 function finalCard(r: RecordEntry, st: Student) {
-  const v = S.view!;
-  const ta = h('textarea', { class: 'textarea', rows: '6', placeholder: r.mode === 'reason' ? '사유 문장' : '최종 본문. 직접 입력·수정할 수 있으며 수정하면 검토가 해제됩니다.' }, r.finalText);
+  const v0 = S.view!;
+  const rid = r.id;
+  const cur = () => data().records.find((x) => x.id === rid) ?? r;
+  const ta = h('textarea', { class: 'textarea', rows: '6', 'data-testid': 'final-text', 'data-focus': `final-${rid}`, placeholder: r.mode === 'reason' ? '사유 문장' : '최종 본문. 직접 입력·수정할 수 있으며 수정하면 검토가 해제됩니다.' }, r.finalText);
   const m = h('span', null, meter(ta.value));
-  ta.addEventListener('input', () => m.replaceChildren(meter(ta.value)));
-  ta.addEventListener('blur', async () => {
-    if (ta.value !== r.finalText && (await act('record.setFinal', { recordId: r.id, finalText: ta.value }))) S.render();
+  const saveState = h('span', { class: 'muted save-state', 'data-testid': 'final-save-state' });
+  const aggHead = h('div', { class: 'agg-top' });
+  const aggBar = h('span');
+  const polishSlot = h('div');
+  const statusSlot = h('div');
+  // 고친 내용은 입력을 멈추면 곧바로 저장하고, 합산 Byte·검사·검토 상태를 입력란을 벗어나지 않아도 바로 다시 보여 준다.
+  let saved = r.finalText;
+  let timer: number | undefined;
+  let chain: Promise<boolean> = Promise.resolve(true);
+  // 확인 체크는 본문을 고치기 전까지만 유지한다(고치면 다시 확인). 검토 줄은 다시 그려도 체크 상태를 잇는다.
+  const confirm = { on: false, reset: () => {} };
+  const showSaveState = (s: 'saved' | 'dirty' | 'saving' | 'error') =>
+    saveState.replaceChildren(s === 'saved' ? '저장됨' : s === 'saving' ? '저장 중…' : s === 'error' ? '저장하지 못했습니다' : '고치는 중 · 잠시 후 자동 저장');
+  const paintAgg = (v: NonNullable<typeof S.view>) => {
+    const a = v.aggregation;
+    // 저장 전에도 입력 중인 본문으로 합산 Byte를 바로 계산한다(저장 뒤 앱 계산으로 다시 맞춘다).
+    const total = a.total - v.output.bytes + measure(ta.value.trim()).bytes;
+    const over = total > a.limit;
+    aggHead.replaceChildren(h('b', null, `${a.label}: ${total} / ${a.limit} Byte`), over ? chip(`${total - a.limit}Byte 초과`, 'danger') : chip(`남음 ${a.limit - total}`, 'ok'));
+    aggBar.className = over ? 'bar-danger' : 'bar-ok';
+    aggBar.style.width = `${Math.min(100, Math.round((total / a.limit) * 100))}%`;
+  };
+  const paint = () => {
+    const v = S.view!;
+    const rr = cur();
+    paintAgg(v);
+    polishSlot.replaceChildren(...(rr.mode === 'normal' ? [finalPolishPanel(rr, ta, () => flush())] : []));
+    statusSlot.replaceChildren(...finalStatus(rr, v, ta, confirm));
+  };
+  /** 지금 입력란 내용을 저장하고 화면의 상태 부분을 새로 그린다. 저장은 차례대로 한 번에 하나씩. */
+  const flush = (): Promise<boolean> => {
+    window.clearTimeout(timer);
+    chain = chain.then(async () => {
+      const value = ta.value;
+      if (value === saved) return true;
+      showSaveState('saving');
+      if (!(await act('record.setFinal', { recordId: rid, finalText: value }))) {
+        showSaveState('error');
+        return false;
+      }
+      saved = value;
+      await refreshView();
+      if (S.view && S.recordId === rid) paint();
+      showSaveState(ta.value === saved ? 'saved' : 'dirty');
+      return true;
+    });
+    return chain;
+  };
+  ta.addEventListener('input', () => {
+    m.replaceChildren(meter(ta.value));
+    confirm.reset();
+    if (S.view) paintAgg(S.view);
+    showSaveState(ta.value === saved ? 'saved' : 'dirty');
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => void flush(), 500);
   });
-  const a = v.aggregation;
-  const pct = Math.min(100, Math.round((a.total / a.limit) * 100));
-  const confirmCb = h('input', { type: 'checkbox' });
-  const reviewBtn = h('button', { class: 'btn primary', disabled: true, onclick: async () => {
-    if (await act('record.review', { recordId: r.id, confirmed: true }, '검토 완료로 표시했습니다.')) S.render();
-  } }, icon('check', 16), '검토 완료');
-  confirmCb.addEventListener('change', () => (reviewBtn.disabled = !confirmCb.checked || !v.reviewGate.ok));
+  ta.addEventListener('blur', () => void flush());
+  const saveBtn = h('button', { class: 'btn secondary sm', 'data-testid': 'final-save', onclick: async () => {
+    if (await flush()) {
+      toast('최종 본문을 저장했습니다.', 'ok');
+      S.render();
+    }
+  } }, '저장');
+  showSaveState('saved');
+  const a = v0.aggregation;
   const priorBox = a.unknownPrior.length
     ? h('div', { class: 'prior' }, banner('warn', '합산 대상의 다른 기록 사용 Byte를 확인해야 합니다.', '이전 학년 등 앱 밖 기록이면 사용 Byte를 입력하세요. 없으면 0이 아니라 "아직 작성 전"을 명시해야 합니다.'), a.unknownPrior.map((key) => {
         const inp = h('input', { class: 'input sm', type: 'number', min: '0', placeholder: 'Byte' });
@@ -668,18 +724,39 @@ function finalCard(r: RecordEntry, st: Student) {
           h('button', { class: 'btn ghost sm', onclick: async () => (await act('priorBytes.set', { studentId: st.id, key, bytes: 0, note: '아직 작성 전(교사 확인)' }, '저장했습니다.')) && S.render() }, '아직 작성 전(0)'));
       }))
     : null;
+  paint();
   return h('div', { class: 'card final' },
     h('div', { class: 'card-head' }, h('div', { class: 'tile' }, icon('check', 24)), h('div', null, h('h2', null, '최종 본문과 교사 검토'), h('p', null, '최종 본문 복사·파일 출력은 검토 완료이면서 최종 검사를 통과한 기록만 가능하고, 편집용 복사는 언제든 됩니다.'))),
     ta,
     liveCheck(ta, r.area),
-    h('div', { class: 'meter-row' }, m, r.target ? h('span', { class: 'muted' }, ` · 목표 ${r.target}자`) : null),
-    r.mode === 'normal' ? finalPolishPanel(r, ta) : null,
+    h('div', { class: 'meter-row' }, m, r.target ? h('span', { class: 'muted' }, ` · 목표 ${r.target}자`) : null, h('span', { class: 'spacer' }), saveState, saveBtn),
+    polishSlot,
     h('div', { class: 'agg' },
-      h('div', { class: 'agg-top' }, h('b', null, `${a.label}: ${a.total} / ${a.limit} Byte`), a.over ? chip(`${a.total - a.limit}Byte 초과`, 'danger') : chip(`남음 ${a.remaining}`, 'ok')),
-      h('div', { class: 'bar big' }, h('span', { class: a.over ? 'bar-danger' : 'bar-ok', style: `width:${pct}%` })),
+      aggHead,
+      h('div', { class: 'bar big' }, aggBar),
       h('div', { class: 'hint' }, [a.members.length ? `같은 합산 단위의 다른 기록 ${a.members.length}건 포함` : '', a.overhead ? `자동 학기 표기·줄바꿈 보수 가산 ${a.overhead}Byte(산입 여부 확인 필요)` : '', a.prior ? `앱 밖 기록 ${a.prior}Byte` : '', ...a.notes].filter(Boolean).join(' · ')),
       priorBox,
     ),
+    statusSlot,
+  );
+}
+
+/** 최종 본문 저장 상태에 따라 바뀌는 부분(문자 경고·검사 결과·검토 줄). 자동 저장 뒤 이 부분만 다시 그린다. */
+function finalStatus(r: RecordEntry, v: NonNullable<typeof S.view>, ta: HTMLTextAreaElement, confirm: { on: boolean; reset: () => void }) {
+  const confirmCb = h('input', { type: 'checkbox', checked: confirm.on });
+  const reviewBtn = h('button', { class: 'btn primary', disabled: !confirm.on || !v.reviewGate.ok, onclick: async () => {
+    if (await act('record.review', { recordId: r.id, confirmed: true }, '검토 완료로 표시했습니다.')) S.render();
+  } }, icon('check', 16), '검토 완료');
+  confirmCb.addEventListener('change', () => {
+    confirm.on = confirmCb.checked;
+    reviewBtn.disabled = !confirmCb.checked || !v.reviewGate.ok;
+  });
+  confirm.reset = () => {
+    confirm.on = false;
+    confirmCb.checked = false;
+    reviewBtn.disabled = true;
+  };
+  return [
     v.output.uncertain.length ? banner('warn', `규정에 없는 문자 ${v.output.uncertain.length}개를 보수적으로 계산했습니다.`, [...new Set(v.output.uncertain.map((u) => u.char))].join(' ')) : null,
     findingsList(v.findings.final, outputHasText(v) ? '금지 규칙에 걸린 표현이 없습니다(공식 적합성 판정은 아님).' : ''),
     !v.reviewGate.ok ? banner('warn', '검토 완료 전 해결할 점', ...v.reviewGate.reasons.map((x) => h('div', null, x))) : null,
@@ -691,17 +768,16 @@ function finalCard(r: RecordEntry, st: Student) {
       h('button', { class: 'btn ghost', onclick: () => run(window.sgb.copyEdit(displayText(ta.value)), '편집용으로 복사했습니다(최종 본문 아님).') }, '편집용 복사'),
       h('button', { class: 'btn', disabled: !v.finalGate.ok, title: v.finalGate.ok ? '' : v.finalGate.reasons.join(' / '), onclick: () => run(window.sgb.copyFinal(r.id), '최종 본문을 복사했습니다.') }, icon('copy', 16), '최종 본문 복사'),
     ),
-  );
+  ].filter(Boolean) as HTMLElement[];
 }
 
 /** 최종 본문·검토 단계 재윤문: 교사가 고친 최종 본문을 한 번 더 다듬어 받고, 비교해 채택하거나 닫는다. */
-function finalPolishPanel(r: RecordEntry, ta: HTMLTextAreaElement) {
+function finalPolishPanel(r: RecordEntry, ta: HTMLTextAreaElement, flush: () => Promise<boolean>) {
   const v = S.view!;
   const p = r.polish?.basis === 'final' ? r.polish : null;
   // 입력 중인 본문을 먼저 저장한 뒤 보낸다(입력란을 벗어나기 전에 단추를 눌러도 지금 글로 윤문한다).
   const send = async (refine: boolean) => {
-    const cur = data().records.find((x) => x.id === r.id);
-    if (cur && ta.value !== cur.finalText && !(await act('record.setFinal', { recordId: r.id, finalText: ta.value }))) return;
+    if (!(await flush())) return;
     await llmFlow(() => window.sgb.preparePolish(r.id, refine, 'final'), refine ? '분량 보정' : '최종 본문 재윤문');
   };
   const canSend = !!r.finalText.trim() && !!r.target && !S.busy;

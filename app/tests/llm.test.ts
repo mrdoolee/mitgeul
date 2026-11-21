@@ -289,12 +289,19 @@ describe('요청 묶음과 늦은 응답', () => {
     // 분량 보정은 직전 재윤문 결과를 함께 보낸다
     const refine = await s.svc.preparePolish(s.recordId, true, 'final');
     expect(refine.preview).toContain('[직전 윤문 결과]');
-    // 채택하면 최종 본문이 바뀌고, 닫으면 제안만 사라진다
+    // 닫으면 제안만 사라지고 본문은 그대로다
+    s.act('record.dismissPolish', { recordId: s.recordId });
+    r = s.d.records.find((x) => x.id === s.recordId)!;
+    expect(r.polish).toBeNull();
+    expect(r.finalText).toBe('교사가 직접 고친 최종 본문임.');
+    // 채택하면 최종 본문이 바뀌고, 끝난 제안은 지운다(채택 뒤 본문을 고쳐도 옛 제안이 다시 보이지 않게)
+    const again = await s.svc.send((await s.svc.preparePolish(s.recordId, false, 'final')).requestId);
+    expect(again.applied).toEqual(['polish']);
+    const proposal = s.d.records.find((x) => x.id === s.recordId)!.polish!.resultText;
     s.act('record.adoptPolish', { recordId: s.recordId });
     r = s.d.records.find((x) => x.id === s.recordId)!;
-    expect(r.finalText).toBe(r.polish!.resultText);
-    s.act('record.dismissPolish', { recordId: s.recordId });
-    expect(s.d.records.find((x) => x.id === s.recordId)!.polish).toBeNull();
+    expect(r.finalText).toBe(proposal);
+    expect(r.polish).toBeNull();
     // 요청 뒤 최종 본문을 고치면 늦게 온 제안은 버린다
     s.act('record.setFinal', { recordId: s.recordId, finalText: '다시 고친 본문임.' });
     mode = 'slow';
