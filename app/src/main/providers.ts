@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { Provider } from '../core/schema';
+import { EFFORTS, type Effort, type Provider } from '../core/schema';
 import { RECOMMENDED_MODEL } from '../core/recommended';
 
 /**
@@ -88,6 +88,8 @@ export interface CallOptions extends CliRuntime {
   apiKey?: string;
   provider: Provider;
   model: string;
+  /** CLI 제공자 추론 강도. 없으면 CLI 기본값. Gemini는 무시한다. */
+  effort?: Effort;
   confirmed: Confirmed;
   schema: Record<string, unknown>;
   schemaName: string;
@@ -419,12 +421,13 @@ export async function callProvider(o: CallOptions): Promise<CallResult> {
   const forbidden = o.confirmed.forbidden;
   const timeoutMs = o.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   if (o.signal?.aborted) throw new ProviderError('요청을 취소했습니다.', 'cancelled');
+  if (o.effort !== undefined && !EFFORTS.includes(o.effort)) throw new ProviderError(`알 수 없는 추론 강도입니다: ${String(o.effort)}`, 'request');
   return withTemp(async ({ root, work }) => {
     const sysFile = path.join(root, 'system.txt');
     const system = o.confirmed.system;
     const user = o.confirmed.user;
     if (o.provider === 'anthropic') {
-      const args = ['-p', '--output-format', 'json', '--system-prompt-file', sysFile, '--json-schema', schemaText, '--tools', '', '--setting-sources', '', '--strict-mcp-config', '--no-session-persistence', '--disable-slash-commands', ...(o.model ? ['--model', o.model] : [])];
+      const args = ['-p', '--output-format', 'json', '--system-prompt-file', sysFile, '--json-schema', schemaText, '--tools', '', '--setting-sources', '', '--strict-mcp-config', '--no-session-persistence', '--disable-slash-commands', ...(o.model ? ['--model', o.model] : []), ...(o.effort ? ['--effort', o.effort] : [])];
       guardCliPayload(o.confirmed, { system, user, extra: args });
       await fs.writeFile(sysFile, system, 'utf8');
       const r = await runCli(file, args, { stdin: user, cwd: work, signal: o.signal, timeoutMs, rt: o });
@@ -451,6 +454,7 @@ export async function callProvider(o: CallOptions): Promise<CallResult> {
       'exec', '--ephemeral', '--skip-git-repo-check', '--ignore-user-config', '--ignore-rules', '-s', 'read-only', '--color', 'never',
       '-C', slash(work), '-c', `model_instructions_file=${JSON.stringify(slash(sysFile))}`,
       ...CODEX_LEAN_CONFIG.flatMap((c) => ['-c', c]),
+      ...(o.effort ? ['-c', `model_reasoning_effort=${JSON.stringify(o.effort)}`] : []),
       '--output-schema', slash(schemaFile), '-o', slash(outFile), '--json',
       ...(o.model ? ['-m', o.model] : []), '-',
     ];
@@ -532,11 +536,12 @@ export async function cliStatus(provider: Provider, rt: CliRuntime = {}): Promis
 /** 모델 테스트: 학생 자료 없는 고정 문장으로 한 번 호출해 응답 여부와 시간을 확인한다. */
 export const MODEL_TEST_SYSTEM = '연결 시험이다. 지정된 JSON 형식으로만 답한다.';
 export const MODEL_TEST_USER = '이 요청은 학생 자료가 없는 모델 연결 시험입니다. {"ok":true}로 답하세요.';
-export async function testModel(provider: Provider, model: string, rt: CliRuntime & { apiKey?: string } = {}): Promise<{ model: string; ms: number }> {
+export async function testModel(provider: Provider, model: string, rt: CliRuntime & { apiKey?: string; effort?: Effort } = {}): Promise<{ model: string; ms: number }> {
   const t0 = Date.now();
   const r = await callProvider({
     provider,
     model,
+    effort: provider === 'gemini' ? undefined : rt.effort,
     confirmed: { system: MODEL_TEST_SYSTEM, user: MODEL_TEST_USER, forbidden: [] },
     schema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] },
     schemaName: 'connection_test',

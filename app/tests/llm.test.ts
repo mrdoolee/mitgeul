@@ -150,14 +150,36 @@ describe.each(['gemini', 'openai', 'anthropic'] as Provider[])('%s 제공자', (
       expect(sent.args).toEqual(expect.arrayContaining(['-p', '--tools', '--setting-sources', '--strict-mcp-config', '--no-session-persistence', '--json-schema', '--system-prompt-file']));
       expect(sent.args[sent.args.indexOf('--tools') + 1]).toBe('');
       expect(sent.args[sent.args.indexOf('--setting-sources') + 1]).toBe('');
+      expect(sent.args).not.toContain('--effort');
     } else {
       expect(req.url).toBe('/codex');
       expect(sent.args).toEqual(expect.arrayContaining(['exec', '--ephemeral', '--ignore-user-config', '--ignore-rules', '--output-schema', '-s', 'read-only', 'features.shell_tool=false', 'skills.bundled.enabled=false', 'tools.web_search=false']));
+      expect(sent.args.some((a) => a.startsWith('model_reasoning_effort='))).toBe(false);
     }
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.OPENAI_API_KEY;
     const r = s.d.records.find((x) => x.id === s.recordId)!;
     expect(r.candidates.find((c) => c.itemId === 'behavior-01')?.texts.length).toBe(5);
+  });
+
+  it('저장한 추론 강도를 준비 시점에 고정해 CLI 인수로 넘긴다(Gemini는 무시)', async () => {
+    mode = 'ok';
+    seen.length = 0;
+    const s = setup(provider);
+    s.act('settings.update', { efforts: { openai: 'high', anthropic: 'low' } });
+    expect(s.d.settings.efforts).toEqual({ openai: 'high', anthropic: 'low' });
+    const prep = await s.svc.prepareCandidates(s.recordId);
+    // 준비 뒤 설정을 바꿔도 교사가 확인한 요청은 준비 시점 강도로 보낸다
+    s.act('settings.update', { efforts: { openai: 'max', anthropic: 'max' } });
+    await s.svc.send(prep.requestId);
+    expect(seen.length).toBe(1);
+    if (provider === 'gemini') {
+      expect(seen[0]!.body).not.toMatch(/effort/i);
+      return;
+    }
+    const args = (JSON.parse(seen[0]!.body) as { args: string[] }).args;
+    if (provider === 'anthropic') expect(args[args.indexOf('--effort') + 1]).toBe('low');
+    else expect(args).toContain('model_reasoning_effort="high"');
   });
 
   it('후보가 4개만 와도 실패로 버리지 않고 저장한다(2026-11-16)', async () => {
@@ -244,6 +266,45 @@ describe('요청 묶음과 늦은 응답', () => {
     const out2 = await p2;
     expect(out2.discarded).toEqual(['polish']);
     expect(s.d.records.find((x) => x.id === s.recordId)!.draft).toBe('교사가 고친 초안.');
+    mode = 'ok';
+  });
+
+  it('최종 본문 재윤문: 교사가 고친 최종 본문을 보내고, 제안은 채택 전까지 본문을 바꾸지 않으며, 본문이 바뀌면 버린다', async () => {
+    const s = setup('anthropic');
+    s.act('composition.add', { recordId: s.recordId, itemId: 'behavior-01', fragments: [{ text: '규칙을 지킴.', source: { kind: 'manual' } }] });
+    s.act('record.assemble', { recordId: s.recordId });
+    s.act('record.setFinal', { recordId: s.recordId, finalText: '교사가 직접 고친 최종 본문임.' });
+    await expect(s.svc.preparePolish(s.recordId, false, 'final')).rejects.toThrow('최종 윤문');
+    s.act('record.setTarget', { recordId: s.recordId, target: 300 });
+    const prep = await s.svc.preparePolish(s.recordId, false, 'final');
+    expect(prep.preview).toContain('[교사가 검토·수정한 최종 본문]');
+    expect(prep.preview).toContain('교사가 직접 고친 최종 본문임.');
+    expect(prep.preview).toContain('[최종 본문 재윤문 요청]');
+    expect(prep.preview).not.toContain('[교사가 조합한 초안]');
+    const out = await s.svc.send(prep.requestId);
+    expect(out.applied).toEqual(['polish']);
+    let r = s.d.records.find((x) => x.id === s.recordId)!;
+    expect(r.polish).toMatchObject({ basis: 'final', sourceText: '교사가 직접 고친 최종 본문임.' });
+    expect(r.finalText).toBe('교사가 직접 고친 최종 본문임.'); // 자동 채택하지 않음
+    // 분량 보정은 직전 재윤문 결과를 함께 보낸다
+    const refine = await s.svc.preparePolish(s.recordId, true, 'final');
+    expect(refine.preview).toContain('[직전 윤문 결과]');
+    // 채택하면 최종 본문이 바뀌고, 닫으면 제안만 사라진다
+    s.act('record.adoptPolish', { recordId: s.recordId });
+    r = s.d.records.find((x) => x.id === s.recordId)!;
+    expect(r.finalText).toBe(r.polish!.resultText);
+    s.act('record.dismissPolish', { recordId: s.recordId });
+    expect(s.d.records.find((x) => x.id === s.recordId)!.polish).toBeNull();
+    // 요청 뒤 최종 본문을 고치면 늦게 온 제안은 버린다
+    s.act('record.setFinal', { recordId: s.recordId, finalText: '다시 고친 본문임.' });
+    mode = 'slow';
+    const prep2 = await s.svc.preparePolish(s.recordId, false, 'final');
+    const p2 = s.svc.send(prep2.requestId);
+    await new Promise((r2) => setTimeout(r2, 600));
+    s.act('record.setFinal', { recordId: s.recordId, finalText: '요청 뒤 또 고친 본문임.' });
+    release?.();
+    expect((await p2).discarded).toEqual(['polish']);
+    expect(s.d.records.find((x) => x.id === s.recordId)!.polish).toBeNull();
     mode = 'ok';
   });
 

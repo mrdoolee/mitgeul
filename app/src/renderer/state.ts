@@ -105,11 +105,11 @@ declare global {
       studentExportPlan(studentId: string): Promise<Res<import('../core/exportRows').StudentExportPlan>>;
       studentExportFile(studentId: string, format: 'xlsx' | 'hwpx'): Promise<Res<{ path: string; rows: number; skipped: number } | null>>;
       prepareCandidates(recordId: string, itemIds?: string[]): Promise<Res<Prepared>>;
-      preparePolish(recordId: string, refine?: boolean): Promise<Res<Prepared>>;
+      preparePolish(recordId: string, refine?: boolean, source?: 'draft' | 'final'): Promise<Res<Prepared>>;
       send(requestId: string): Promise<Res<{ applied: string[]; failed: Record<string, string>; discarded: string[]; message: string; data: AppData }>>;
       cancel(requestId: string): Promise<Res<void>>;
       listModels(p: Provider): Promise<Res<{ models: string[]; auto: string | null }>>;
-      testModel(p: Provider, model: string): Promise<Res<{ model: string; ms: number; auto: boolean }>>;
+      testModel(p: Provider, model: string, effort?: string): Promise<Res<{ model: string; ms: number; auto: boolean }>>;
       cliStatus(): Promise<Res<CliStatusRes>>;
       loginStart(p: 'anthropic' | 'openai', method: 'browser' | 'device'): Promise<Res<LoginView>>;
       loginState(p: 'anthropic' | 'openai'): Promise<Res<CliStatusRes & { view: LoginView | null }>>;

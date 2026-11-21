@@ -28,7 +28,7 @@ import {
 import { PROMPT_VERSION, type Rubric } from '../core/prompts';
 import { parseRosterTable, previewRoster } from '../core/roster';
 import { checkText, RULES_VERSION } from '../core/rules';
-import { AppDataSchema, integrityErrors, PROVIDERS, type AppData, type Area, type Provider } from '../core/schema';
+import { AppDataSchema, EFFORTS, integrityErrors, PROVIDERS, type AppData, type Area, type Effort, type Provider } from '../core/schema';
 import { buildHwpx, buildStudentHwpx, buildStudentXlsx, buildXlsx, initHwp } from './exporters';
 import { readXlsxFirstSheet } from './xlsxRead';
 import { rosterSampleXlsx } from './exporters';
@@ -269,7 +269,7 @@ function registerIpc() {
   handle('query:exportPlan', (workId: string, area: Area, semesters: (1 | 2)[]) => (requireOpen(), planExport(store.data, String(workId), area, (semesters ?? []).filter((s) => s === 1 || s === 2))));
 
   handle('llm:prepareCandidates', (recordId: string, itemIds?: string[]) => (requireOpen(), llm.prepareCandidates(String(recordId), Array.isArray(itemIds) ? itemIds.map(String) : undefined)));
-  handle('llm:preparePolish', (recordId: string, refine?: boolean) => (requireOpen(), llm.preparePolish(String(recordId), refine === true)));
+  handle('llm:preparePolish', (recordId: string, refine?: boolean, source?: string) => (requireOpen(), llm.preparePolish(String(recordId), refine === true, source === 'final' ? 'final' : 'draft')));
   handle('llm:send', async (requestId: string) => {
     requireOpen();
     const r = await llm.send(String(requestId));
@@ -281,10 +281,11 @@ function registerIpc() {
     const models = await modelsOf(provider, true);
     return { models, auto: pickAutoModel(provider, models) };
   });
-  handle('llm:testModel', async (provider: Provider, model: string) => {
+  handle('llm:testModel', async (provider: Provider, model: string, effort?: string) => {
     if (!PROVIDERS.includes(provider)) throw new Error('알 수 없는 제공자');
+    if (effort && !(EFFORTS as readonly string[]).includes(effort)) throw new Error('알 수 없는 추론 강도');
     const { model: m, auto } = await resolveModel(provider, String(model ?? '').trim());
-    const r = await testModel(provider, m, { ...cliRuntime, apiKey: provider === 'gemini' ? await keys.get(provider) : undefined });
+    const r = await testModel(provider, m, { ...cliRuntime, apiKey: provider === 'gemini' ? await keys.get(provider) : undefined, effort: provider === 'gemini' || !effort ? undefined : (effort as Effort) });
     return { ...r, auto };
   });
   // CLI 상태 다시 확인: 상태 확인 명령만 실행한다(자격 증명 파일은 읽지 않는다).

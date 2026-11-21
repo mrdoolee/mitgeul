@@ -116,6 +116,26 @@ describe('구독 CLI 전송 경계', () => {
     expect(bodies.length).toBe(before); // 가짜 CLI는 실행되지 않음
   });
 
+  it('추론 강도: Claude는 --effort, Codex는 model_reasoning_effort로 넘기고, 없으면 넘기지 않으며 알 수 없는 값은 실행 전에 막는다', async () => {
+    reply = () => ({ text: '{"ok":true}' });
+    const c = { system: 'S', user: 'U', forbidden: [] };
+    await callProvider({ provider: 'anthropic', model: 'm', effort: 'xhigh', confirmed: c, schema, schemaName: 't', ...rt() });
+    let args: string[] = bodies.at(-1).args;
+    expect(args[args.indexOf('--effort') + 1]).toBe('xhigh');
+    await callProvider({ provider: 'openai', model: 'm', effort: 'medium', confirmed: c, schema, schemaName: 't', ...rt() });
+    args = bodies.at(-1).args;
+    expect(args[args.indexOf('model_reasoning_effort="medium"') - 1]).toBe('-c');
+    await callProvider({ provider: 'anthropic', model: 'm', confirmed: c, schema, schemaName: 't', ...rt() });
+    expect(bodies.at(-1).args).not.toContain('--effort');
+    await testModel('openai', 'm', { ...rt(), effort: 'low' });
+    expect(bodies.at(-1).args).toContain('model_reasoning_effort="low"');
+    const before = bodies.length;
+    const bad = await callProvider({ provider: 'openai', model: 'm', effort: 'ultra' as never, confirmed: c, schema, schemaName: 't', ...rt() }).catch((e) => e);
+    expect(bad).toBeInstanceOf(ProviderError);
+    expect(bad.code).toBe('request');
+    expect(bodies.length).toBe(before);
+  });
+
   it('상태 확인·모델 목록·모델 테스트', async () => {
     expect(await cliStatus('anthropic', rt())).toMatchObject({ installed: true, loggedIn: true });
     expect(await cliStatus('openai', rt())).toMatchObject({ installed: true, loggedIn: true });

@@ -6,7 +6,7 @@
 export const APP_NAME = "밑글";
 export const APP_NAME_EN = "MITGEUL";
 export const APP_TAGLINE = "생활기록부 초안 작성 도우미";
-export const APP_VERSION = "0.1.0";
+export const APP_VERSION = "0.1.1";
 export const DOWNLOAD_FILE = `MITGEUL-${APP_VERSION}-portable.exe`;
 export const SITE_URL = "https://mitgeul-trdoolee.vercel.app";
 export const REPO_URL = "https://github.com/mrdoolee/mitgeul";

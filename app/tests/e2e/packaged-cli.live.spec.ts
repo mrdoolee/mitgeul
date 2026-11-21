@@ -27,13 +27,17 @@ test('패키지된 앱이 PATH의 실제 Claude Code·Codex CLI를 찾아 상태
   // 기본 제공자는 Gemini(API 키)라 Claude로 바꾼다
   await page.locator('select').filter({ has: page.locator('option[value="anthropic"]') }).selectOption('anthropic');
   await expect(page.getByTestId('cli-status')).toContainText('로그인됨', { timeout: 30_000 });
+  // 추론 강도를 골라 실제 Claude Code가 --effort를 받아들이는지 확인한다
+  await page.getByLabel('추론 강도').selectOption('low');
   await page.getByRole('button', { name: '모델 테스트' }).click();
   await expect(page.getByText(/claude-sonnet-5-5 \(자동 선택\) 모델이 정상 응답했습니다/)).toBeVisible({ timeout: 120_000 });
+  await expect(page.locator('.status-slot')).toContainText('추론 강도 low');
   console.log('claude', await page.locator('.status-slot').innerText());
   await page.locator('select').filter({ has: page.locator('option', { hasText: 'ChatGPT' }) }).selectOption('openai');
   await expect(page.getByTestId('cli-status')).toContainText('로그인됨', { timeout: 30_000 });
   await page.getByRole('button', { name: '모델 목록 불러오기' }).click();
   await expect(page.getByText(/사용 가능한 모델 \d+개를 불러왔습니다/)).toBeVisible({ timeout: 60_000 });
+  await page.getByLabel('추론 강도').selectOption('low');
   await page.getByRole('button', { name: '모델 테스트' }).click();
   // 성공 또는 오류 배너가 뜰 때까지 기다리고, 실패하면 오류 문구를 그대로 남긴다
   await expect(page.locator('.status-slot .banner, .status-slot [class*=banner]').filter({ hasText: /정상 응답했습니다|사용할 수 없습니다/ })).toBeVisible({ timeout: 150_000 });

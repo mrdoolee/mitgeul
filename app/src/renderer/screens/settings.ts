@@ -1,4 +1,4 @@
-import type { AppData, Provider } from '../../core/schema';
+import { EFFORTS, type AppData, type Effort, type Provider } from '../../core/schema';
 import { BAN_PRESETS } from '../../core/banPresets';
 import { go } from '../app';
 import { banner, confirmText, field, h, icon, promptPassword, select, toast } from '../dom';
@@ -8,6 +8,8 @@ import { loginButtons, loginPanel } from '../cliLoginPanel';
 import { RECOMMENDED_MODEL } from '../../core/recommended';
 import { openModelCompare } from '../modelCompare';
 import { openPrivacy } from '../privacy';
+
+const EFFORT_LABEL: Record<Effort, string> = { low: '낮음', medium: '보통', high: '높음', xhigh: '매우 높음', max: '최대' };
 
 export async function renderSettings(el: HTMLElement) {
   const d = data();
@@ -129,6 +131,13 @@ async function aiCard(el: HTMLElement) {
     modelSel.value = keep;
   };
   fillModels([], null);
+  // 추론 강도(CLI 제공자만). 빈 값이면 CLI 기본값을 쓴다.
+  const savedEffort = isCli ? (d.settings.efforts?.[prov as 'anthropic' | 'openai'] ?? '') : '';
+  const effortSel = h('select', { class: 'select', 'aria-label': '추론 강도', 'data-testid': 'effort-select' },
+    h('option', { value: '' }, 'CLI 기본값'),
+    ...EFFORTS.map((e) => h('option', { value: e }, `${EFFORT_LABEL[e]} (${e})`)),
+  );
+  effortSel.value = savedEffort;
   const status = h('div', { class: 'status-slot' });
   const setStatus = (kind: 'ok' | 'err' | 'info' | 'warn', title: string, sub = '') => status.replaceChildren(banner(kind, title, sub));
   const noKey = !app.keyStatus[prov];
@@ -144,10 +153,10 @@ async function aiCard(el: HTMLElement) {
   const testBtn = h('button', { class: 'btn secondary', disabled: noKey, onclick: async () => {
     testBtn.disabled = true;
     setStatus('info', '모델이 응답하는지 확인하는 중… (학생 자료 없이 시험 문장 한 번만 보냅니다)');
-    const r = await window.sgb.testModel(prov, modelSel.value);
+    const r = await window.sgb.testModel(prov, modelSel.value, isCli ? effortSel.value : undefined);
     testBtn.disabled = false;
     if (!r.ok) return setStatus('err', '이 모델은 지금 사용할 수 없습니다', r.error);
-    setStatus(r.value.ms > 30000 ? 'warn' : 'ok', `${r.value.model}${r.value.auto ? ' (자동 선택)' : ''} 모델이 정상 응답했습니다`, `응답 시간 ${(r.value.ms / 1000).toFixed(1)}초${isCli ? '(CLI 시작 시간 포함)' : ''}${r.value.ms > 30000 ? ' — 느립니다. 더 가벼운 모델을 고려하세요.' : ''} · [모델 저장]을 눌러야 작성에 반영됩니다.`);
+    setStatus(r.value.ms > 30000 ? 'warn' : 'ok', `${r.value.model}${r.value.auto ? ' (자동 선택)' : ''} 모델이 정상 응답했습니다`, `${isCli ? `추론 강도 ${effortSel.value || 'CLI 기본값'} · ` : ''}응답 시간 ${(r.value.ms / 1000).toFixed(1)}초${isCli ? '(CLI 시작 시간 포함)' : ''}${r.value.ms > 30000 ? ' — 느립니다. 더 가벼운 모델을 고려하세요.' : ''} · [모델 저장]을 눌러야 작성에 반영됩니다.`);
   } }, icon('spark', 16), '모델 테스트');
   el.append(
     h('div', { class: 'card' },
@@ -189,6 +198,7 @@ async function aiCard(el: HTMLElement) {
         : '[ChatGPT 로그인]을 누르면 Codex CLI가 준 로그인 화면을 브라우저로 엽니다. 로그인 정보는 Codex CLI가 저장하고, 이 앱은 읽거나 보관하지 않습니다.'),
       isCli ? loginPanel(prov as 'anthropic' | 'openai') : '',
       field('AI 모델', h('div', { class: 'inline' }, modelSel, loadBtn, testBtn), undefined, '선택 · 기본은 자동'),
+      isCli ? field('추론 강도', effortSel, '높을수록 더 오래 생각해 느려지고 구독 한도를 더 씁니다. CLI 기본값은 모델마다 다릅니다. [모델 테스트]는 고른 강도로 시험하고, [모델 저장]을 눌러야 작성에 반영됩니다.', '선택 · 기본은 CLI 기본값') : '',
       banner('info', RECOMMENDED_MODEL[prov] ? `권장 모델: ${RECOMMENDED_MODEL[prov]}` : '권장 모델: 자동(Codex가 돌려준 목록의 첫 모델)', prov === 'anthropic' ? 'Claude는 Sonnet 5.5를 권장합니다. 품질과 속도·구독 한도 소모의 균형이 좋습니다(Opus는 느리고 한도를 많이 씁니다).' : prov === 'openai' ? 'ChatGPT 계정의 Codex는 Codex 전용 모델만 허용합니다. 비워 두면 Codex가 돌려준 목록의 첫 모델을 씁니다. Codex는 요청마다 CLI 자체 지시가 함께 갑니다. 앱이 필요 없는 도구 설명을 빼서 줄였지만 Claude보다 한도 소모가 큽니다.' : 'Gemini는 gemini-3.5-flash를 권장합니다. 이름에 lite가 붙은 모델은 빠르고 무료 한도에 유리하지만 윤문 분량이 들쭉날쭉했습니다.\nGemini Flash는 제공자 쪽이 혼잡하면 짧은 요청도 1~2분 걸릴 수 있습니다(lite는 보통 몇 초). 급할 때는 lite 모델이나 다른 제공자를 고르세요.'),
       h('div', { class: 'btn-row left tight' }, h('button', { class: 'btn secondary sm', 'aria-haspopup': 'dialog', onclick: () => void openModelCompare(prov) }, icon('spark', 14), 'AI 모델별 결과 비교 보기')),
       h('p', { class: 'hint' }, '비워 두면(자동) 목록에 권장 모델이 있으면 그것을, 없으면 비슷한 급의 최신 정식 모델을 고르며, 미리 보기·실험 모델은 자동으로 고르지 않습니다.\n제공자가 모델을 종료·교체해 응답이 오지 않으면 [모델 목록 불러오기]에서 지금 쓸 수 있는 모델을 골라 [모델 테스트] 후 저장하세요. 어떤 모델로 보냈는지는 후보·윤문 결과에 표시됩니다.'),
@@ -196,8 +206,9 @@ async function aiCard(el: HTMLElement) {
       noKey && isCli ? banner('warn', cli?.installed ? `${label}에 로그인되어 있지 않습니다.` : `${label} CLI를 찾지 못했습니다.`, cli?.installed ? `위의 [${prov === 'anthropic' ? 'Claude' : 'ChatGPT'} 로그인]을 누르세요. 로그인해야 모델 목록·테스트를 쓸 수 있습니다.` : '[설치·로그인 안내]를 따라 CLI를 설치한 뒤 [상태 다시 확인]을 누르세요. 설치되면 이 화면에서 로그인할 수 있습니다.') : '',
       status,
       h('div', { class: 'btn-row left' }, h('button', { class: 'btn', onclick: async () => {
-        if (await act('settings.update', { models: { [prov]: modelSel.value } }, modelSel.value ? `${modelSel.value} 모델을 저장했습니다.` : '자동 선택으로 저장했습니다.')) S.render();
-      } }, '모델 저장'), h('span', { class: 'muted' }, `현재 저장: ${saved || '자동 선택'}`)),
+        const what = `${modelSel.value || '자동 선택'}${isCli ? ` · 추론 강도 ${effortSel.value || 'CLI 기본값'}` : ''}`;
+        if (await act('settings.update', { models: { [prov]: modelSel.value }, ...(isCli ? { efforts: { [prov]: effortSel.value } } : {}) }, `${what}(으)로 저장했습니다.`)) S.render();
+      } }, '모델 저장'), h('span', { class: 'muted' }, `현재 저장: ${saved || '자동 선택'}${isCli ? ` · 추론 강도 ${savedEffort || 'CLI 기본값'}` : ''}`)),
       h('hr'),
       h('label', { class: 'check strong' }, (() => {
         const cb = h('input', { type: 'checkbox', checked: d.settings.confirmBeforeSend });

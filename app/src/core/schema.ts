@@ -7,6 +7,11 @@ export const SCHOOL_LEVELS = ['middle', 'high'] as const;
 export type SchoolLevel = (typeof SCHOOL_LEVELS)[number];
 export const PROVIDERS = ['gemini', 'openai', 'anthropic'] as const;
 export type Provider = (typeof PROVIDERS)[number];
+/** 구독 CLI(Claude Code·Codex) 추론 강도. 빈 값은 CLI 기본값(옵션을 넘기지 않음). Gemini는 쓰지 않는다. */
+export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type Effort = (typeof EFFORTS)[number];
+export const EffortSettingSchema = z.enum(['', ...EFFORTS]);
+export type EffortSetting = z.infer<typeof EffortSettingSchema>;
 export const TARGETS = [150, 300, 500] as const;
 export type Target = (typeof TARGETS)[number];
 /** 이전 형식의 목표 125·250자를 150·300자로 옮긴다(2026-11-18 사용자 결정). 500자는 그대로다. */
@@ -170,8 +175,11 @@ export const PolishSchema = z.object({
   provider: z.enum(PROVIDERS),
   model: shortText,
   createdAt: z.string(),
+  /** 윤문에 보낸 글: 영역 초안(draft) 또는 최종 본문·검토 단계의 최종 본문(final). 이전 형식은 초안으로 읽는다. */
+  basis: z.enum(['draft', 'final']).default('draft'),
 });
 export type Polish = z.infer<typeof PolishSchema>;
+export type PolishSource = Polish['basis'];
 
 export const ReviewSchema = z.object({ hash: z.string(), rulesVersion: z.string(), reviewedAt: z.string() });
 export type Review = z.infer<typeof ReviewSchema>;
@@ -227,6 +235,8 @@ export const SettingsSchema = z.object({
   schoolAliases: z.array(z.string().min(1).max(60)).max(20),
   provider: z.enum(PROVIDERS),
   models: z.object({ gemini: shortText, openai: shortText, anthropic: shortText }),
+  /** CLI 제공자별 추론 강도. 이전 형식(필드 없음)은 CLI 기본값으로 읽는다. */
+  efforts: z.object({ openai: EffortSettingSchema, anthropic: EffortSettingSchema }).default(() => ({ openai: '' as const, anthropic: '' as const })),
   /** 교사가 직접 입력한 기재 금지 문구(예: UN, UNESCO). 프롬프트에 넘기고 입력·본문에서 실시간 검사한다. */
   bannedTerms: z.array(z.string().min(1).max(60)).max(200).default(() => [...BAN_PRESET_TERMS]),
   /** AI 전송 전 문안 확인 창. 기본 꺼짐(익명화·이름 잔존 검사는 항상 수행). */
@@ -261,6 +271,7 @@ export function emptyAppData(): AppData {
       schoolAliases: [],
       provider: 'gemini',
       models: { gemini: '', openai: '', anthropic: '' },
+      efforts: { openai: '', anthropic: '' },
       bannedTerms: [...BAN_PRESET_TERMS],
       confirmBeforeSend: false,
     },

@@ -202,6 +202,8 @@ export interface PolishRequestInput {
   evidence: string[];
   /** 분량 보정 요청: 직전 윤문 결과 */
   previous?: string;
+  /** 최종 본문·검토 단계의 재윤문: draft에 교사가 검토·수정한 최종 본문을 넣는다. */
+  fromFinal?: boolean;
 }
 
 /** 목표 분량 범위. 초기 앱처럼 '약 N자 내외에 반드시 도달'을 요구하되, 남은 Byte로 쓸 수 있는 최대 글자 수를 넘지 않게 한다. */
@@ -250,10 +252,11 @@ export function polishUserPrompt(x: PolishRequestInput): string {
     '[사용한 관찰 근거]',
     ...x.evidence.map((e) => `- ${e}`),
     '',
-    '[교사가 조합한 초안]',
+    x.fromFinal ? '[교사가 검토·수정한 최종 본문]' : '[교사가 조합한 초안]',
     x.draft,
     ...(x.previous ? ['', '[직전 윤문 결과]', x.previous] : []),
     '</자료>',
+    ...(x.fromFinal ? ['', FINAL_REPOLISH_INSTRUCTION] : []),
     ...(x.previous ? ['', refineInstruction([...x.previous].length, polishRange(x.target, x.remainingBytes))] : []),
     '',
     '출력 형식(JSON): {"text":"윤문한 본문","suggestions":["검토 제안"]}',
@@ -270,6 +273,9 @@ function lengthPlan(range: { min: number; max: number }, nEvidence: number): str
     nEvidence > 1 ? `근거 배분: 아래 근거 ${nEvidence}개 각각에 약 ${per}자(약 ${Math.max(1, Math.round(per / 45))}문장)씩` : `근거 배분: 근거 전체로 약 ${mid}자`,
   ];
 }
+
+/** 최종 본문 재윤문: 교사가 손본 표현·사실을 지키고 문장만 다시 다듬게 한다. */
+export const FINAL_REPOLISH_INSTRUCTION = '[최종 본문 재윤문 요청] 위 본문은 초안이 아니라 교사가 이미 검토하고 직접 고친 최종 본문이다. 교사가 고친 표현·사실·순서를 최대한 그대로 살리고, 어색한 문장 연결·중복·맞춤법·띄어쓰기·종결 표현만 다듬는다. 근거에 없는 내용을 더하지 않으며, 분량은 분량 범위를 지킨다.';
 
 function refineInstruction(n: number, range: { min: number; max: number }): string {
   if (n < range.min)

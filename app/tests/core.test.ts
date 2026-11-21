@@ -193,6 +193,13 @@ describe('검토 유효성', () => {
     expect(m.records[0]!.polish!.target).toBe(150);
     expect(reviewValid(m, m.records[0]!)).toBe(true);
   });
+  it('이전 저장본(추론 강도 없음)은 CLI 기본값으로 읽고, 알 수 없는 강도는 거부한다', () => {
+    const raw = JSON.parse(JSON.stringify(baseData()));
+    delete raw.settings.efforts;
+    expect(AppDataSchema.parse(raw).settings.efforts).toEqual({ openai: '', anthropic: '' });
+    raw.settings.efforts = { openai: 'ultra', anthropic: '' };
+    expect(() => AppDataSchema.parse(raw)).toThrow();
+  });
   it('검토 전 기록은 최종 출력 불가, 미작성 상태 집계', () => {
     const d = baseData();
     rec(d, 'r1', 's1', 'w-home', 'behavior', 1, '규칙을 지킴.');

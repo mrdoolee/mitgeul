@@ -67,8 +67,16 @@ test('가짜 Claude Code CLI로 후보 생성 → 복수·부분 조합 → 취�
   await page.getByRole('button', { name: '모델 목록 불러오기' }).click();
   await expect(page.getByText('사용 가능한 모델 4개를 불러왔습니다')).toBeVisible();
   await page.getByLabel('AI 모델').selectOption('claude-haiku-5-5');
+  // 추론 강도: 기본은 CLI 기본값(옵션을 넘기지 않음), 고르면 모델 테스트도 그 강도로 보낸다
+  await expect(page.getByLabel('추론 강도')).toHaveValue('');
+  await page.getByLabel('추론 강도').selectOption('low');
   await page.getByRole('button', { name: '모델 테스트' }).click();
   await expect(page.getByText('claude-haiku-5-5 모델이 정상 응답했습니다')).toBeVisible();
+  await expect(page.getByText(/추론 강도 low · 응답 시간/)).toBeVisible();
+  {
+    const t = JSON.parse(requests.filter((r) => r.body.includes('모델 연결 시험')).at(-1)!.body) as { args: string[] };
+    expect(t.args[t.args.indexOf('--effort') + 1]).toBe('low');
+  }
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, '09-model-settings.png') });
   // 모델별 결과 비교 안내 창: 저장된 시험 결과만 보여 주고 요청은 보내지 않는다
   const before = requests.length;
@@ -86,7 +94,7 @@ test('가짜 Claude Code CLI로 후보 생성 → 복수·부분 조합 → 취�
   await expect(cmp).toHaveCount(0);
   expect(requests.length).toBe(before);
   await page.getByRole('button', { name: '모델 저장' }).click();
-  await expect(page.getByText('현재 저장: claude-haiku-5-5')).toBeVisible();
+  await expect(page.getByText('현재 저장: claude-haiku-5-5 · 추론 강도 low')).toBeVisible();
 
   await menu(page, /관찰 기록 및 초안 작성/);
   await page.getByRole('button', { name: '행특' }).click();
@@ -114,6 +122,11 @@ test('가짜 Claude Code CLI로 후보 생성 → 복수·부분 조합 → 취�
   await expect(page.getByText('후보 저장 2개 항목')).toBeVisible();
   await expect(page.locator('#busy-toast')).toHaveCount(0);
   const posted = requests.filter((r) => r.method === 'POST' && !r.body.includes('모델 연결 시험'));
+  // 저장한 추론 강도로 실제 요청을 보낸다
+  for (const r of posted) {
+    const a = (JSON.parse(r.body) as { args: string[] }).args;
+    expect(a[a.indexOf('--effort') + 1]).toBe('low');
+  }
   expect(posted.length).toBe(1);
   expect(posted[0]!.url).toBe('/claude');
   const sent = JSON.parse(posted[0]!.body) as { model: string; args: string[]; system: string; user: string };
@@ -207,6 +220,30 @@ test('가짜 Claude Code CLI로 후보 생성 → 복수·부분 조합 → 취�
   await expect(page.locator('.card.final')).toBeVisible();
   // 행특 학기 구분 표기 넣기 체크는 없다(교사가 본문에 직접 입력)
   await expect(page.getByText('학기 구분 표기')).toHaveCount(0);
+  // 최종 본문 재윤문: 교사가 고친 본문을 입력란을 벗어나기 전에 바로 보내도 지금 글로 윤문한다
+  const finalTa = page.locator('.card.final textarea').first();
+  await finalTa.fill('학급 규칙을 스스로 지키며 친구 말을 끝까지 들음. 교사가 고친 문장임.');
+  await page.getByRole('button', { name: '최종 본문 한 번 더 윤문' }).click();
+  await expect(pre).toContainText('[교사가 검토·수정한 최종 본문]');
+  await expect(pre).toContainText('교사가 고친 문장임.');
+  await expect(pre).toContainText('[최종 본문 재윤문 요청]');
+  await page.getByLabel('전송 문안을 확인했습니다').check();
+  await page.getByRole('button', { name: '이 문안으로 전송' }).click();
+  await expect(page.getByText('윤문 제안을 받았습니다')).toBeVisible();
+  await expect(page.locator('#busy-toast')).toHaveCount(0, { timeout: 30000 });
+  // 채택 전에는 최종 본문이 그대로다
+  await expect(page.getByTestId('final-repolish-result')).toBeVisible();
+  await expect(finalTa).toHaveValue('학급 규칙을 스스로 지키며 친구 말을 끝까지 들음. 교사가 고친 문장임.');
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, '11b-final-repolish.png'), fullPage: true });
+  const proposal = (await page.getByTestId('final-repolish-result').textContent()) ?? '';
+  await page.getByRole('button', { name: '재윤문 제안 채택' }).click();
+  await expect(page.getByText('재윤문 제안을 최종 본문으로 옮겼습니다.')).toBeVisible();
+  await expect(finalTa).toHaveValue(proposal);
+  await expect(page.getByText('재윤문 제안을 최종 본문에 채택했습니다.')).toBeVisible();
+  // 최종 윤문 탭은 재윤문 제안을 초안 윤문으로 보여 주지 않는다
+  await tab(page, '최종 윤문');
+  await expect(page.getByText('최종 본문·검토 탭에서 받은 재윤문 제안이 있습니다.')).toBeVisible();
+  await tab(page, /최종 본문/);
   await page.locator('.card.final').getByLabel(/관찰 근거와 사실을 확인/).check();
   await page.locator('.card.final').getByRole('button', { name: '검토 완료' }).click();
   await expect(page.getByRole('button', { name: '최종 본문 복사' })).toBeEnabled();

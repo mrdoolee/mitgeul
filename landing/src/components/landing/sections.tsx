@@ -90,7 +90,7 @@ const steps: { title: string; body: ReactNode }[] = [
   },
   {
     title: "검토하고 내보내기",
-    body: <>검토를 마친 본문만 복사하거나 XLSX, HWPX 파일로 내보낼 수 있습니다.</>,
+    body: <>검토 단계에서 고친 최종 본문을 한 번 더 다듬어 받아 비교할 수 있습니다. 검토를 마친 본문만 복사하거나 XLSX, HWPX 파일로 내보낼 수 있습니다.</>,
   },
 ];
 
@@ -294,7 +294,7 @@ export function DownloadSection() {
                     <a href={CODEX_SETUP_URL} target="_blank" rel="noopener noreferrer" className="text-accent-foreground underline underline-offset-4">Codex CLI</a> 설치
                   </li>
                 </ul>
-                <span className="mt-1.5 block">로그인은 앱의 [Claude 로그인]·[ChatGPT 로그인] 버튼으로 합니다. 연결하지 않아도 관찰 내용과 본문은 직접 쓸 수 있습니다.</span>
+                <span className="mt-1.5 block">로그인은 앱의 [Claude 로그인]·[ChatGPT 로그인] 버튼으로 합니다. Claude·ChatGPT는 모델과 추론 강도(낮음~최대)를 고를 수 있습니다. 연결하지 않아도 관찰 내용과 본문은 직접 쓸 수 있습니다.</span>
               </dd>
             </div>
           </div>

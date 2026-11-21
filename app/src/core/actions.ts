@@ -14,6 +14,7 @@ import {
   ObservationSchema,
   PROVIDERS,
   SCHOOL_LEVELS,
+  EffortSettingSchema,
   SUBJECT_KINDS,
   TargetSchema,
   type AppData,
@@ -69,15 +70,17 @@ export const ACTIONS = {
       schoolAliases: z.array(z.string().min(1).max(60)).max(20).optional(),
       provider: z.enum(PROVIDERS).optional(),
       models: z.object({ gemini: z.string().max(200), openai: z.string().max(200), anthropic: z.string().max(200) }).partial().optional(),
+      efforts: z.object({ openai: EffortSettingSchema, anthropic: EffortSettingSchema }).partial().optional(),
       bannedTerms: z.array(z.string().min(1).max(60)).max(200).optional(),
       confirmBeforeSend: z.boolean().optional(),
     }),
     run(d: AppData, p: any) {
-      const { models, ...rest } = p;
+      const { models, efforts, ...rest } = p;
       if (rest.bannedTerms) rest.bannedTerms = [...new Set((rest.bannedTerms as string[]).map((t) => t.trim()).filter(Boolean))];
       if (rest.schoolLevel && rest.schoolLevel !== d.settings.schoolLevel && d.students.length) throw new ActionError('학생 명단이 있으면 학교급을 바꿀 수 없습니다.');
       Object.assign(d.settings, rest);
       if (models) Object.assign(d.settings.models, models);
+      if (efforts) d.settings.efforts = { ...d.settings.efforts, ...efforts };
     },
   },
   'class.create': {
@@ -552,6 +555,15 @@ export const ACTIONS = {
       const r = rec(d, p.recordId);
       if (!r.polish) throw new ActionError('윤문 결과가 없습니다.');
       r.finalText = r.polish.resultText;
+      touch(r);
+    },
+  },
+  /** 윤문 제안을 채택하지 않고 닫는다(최종 본문은 그대로). */
+  'record.dismissPolish': {
+    schema: z.object({ recordId: id }),
+    run(d: AppData, p: any) {
+      const r = rec(d, p.recordId);
+      r.polish = null;
       touch(r);
     },
   },

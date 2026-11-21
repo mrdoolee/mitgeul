@@ -593,7 +593,9 @@ function draftCard(r: RecordEntry) {
 
 function polishCard(r: RecordEntry) {
   const v = S.view!;
-  const p = r.polish;
+  // 최종 본문·검토 단계에서 받은 재윤문은 그 탭에서 보여 준다.
+  const finalBased = r.polish?.basis === 'final';
+  const p = finalBased ? null : r.polish;
   // 남은 Byte로 쓸 수 있는 글자 수(한글 1자 3Byte 기준). 행특은 연간 900Byte(약 300자)라 500자 목표를 쓸 수 없다.
   const remaining = Math.max(0, v.aggregation.remaining + measure(v.output.text).bytes);
   const cap = Math.floor(remaining / 3);
@@ -604,6 +606,7 @@ function polishCard(r: RecordEntry) {
     h('div', { class: 'card-head' }, h('div', { class: 'tile' }, icon('spark', 24)), h('div', null, h('h2', null, '최종 윤문'), h('p', null, '목표 글자 수(공백 포함)는 영역 초안 전체에 적용합니다. AI는 근거 안에서 풀어 쓰거나 압축하며 사실을 더하지 않고, 사실 보존과 Byte 한도가 목표보다 우선합니다.'))),
     h('div', { class: 'inline' }, h('span', { class: 'muted' }, '목표'), targetSel, h('span', { class: 'spacer' }), h('span', { class: 'muted' }, `남은 Byte ${Math.max(0, v.aggregation.remaining + measure(v.output.text).bytes)} (${v.aggregation.label})`),
       h('button', { class: 'btn', disabled: !r.draft.trim() || !r.target || !!S.busy, onclick: () => llmFlow(() => window.sgb.preparePolish(r.id), '최종 윤문') }, icon('spark', 16), '윤문 요청')),
+    finalBased ? banner('info', '최종 본문·검토 탭에서 받은 재윤문 제안이 있습니다.', '여기서 [윤문 요청]을 누르면 그 제안 대신 지금 초안으로 새 윤문을 받습니다.') : null,
     r.target && tooBig(r.target) ? banner('warn', `목표 ${r.target}자는 남은 Byte로 쓸 수 없습니다.`, `${v.aggregation.label} 기준 남은 ${remaining}Byte(한글 약 ${cap}자)가 한도라서, 윤문은 목표 대신 이 한도(약 ${polishRange(r.target, remaining).min}~${polishRange(r.target, remaining).max}자)에 맞춥니다.\n행특은 기재요령상 연간 300자(900Byte)라 500자 목표를 쓸 수 없으니 더 작은 목표를 고르세요.`) : null,
     !p ? h('div', { class: 'compare single' },
       h('div', null, h('div', { class: 'compare-title' }, '초안 · 영역 취합에서 고친 내용이 바로 반영됩니다'), h('div', { class: 'compare-text draft-live' }, r.draft.trim() ? displayText(r.draft) : '아직 초안이 없습니다. [영역 취합] 탭에서 항목 문장을 취합하세요.'), r.draft.trim() ? meter(r.draft) : null),
@@ -670,6 +673,7 @@ function finalCard(r: RecordEntry, st: Student) {
     ta,
     liveCheck(ta, r.area),
     h('div', { class: 'meter-row' }, m, r.target ? h('span', { class: 'muted' }, ` · 목표 ${r.target}자`) : null),
+    r.mode === 'normal' ? finalPolishPanel(r, ta) : null,
     h('div', { class: 'agg' },
       h('div', { class: 'agg-top' }, h('b', null, `${a.label}: ${a.total} / ${a.limit} Byte`), a.over ? chip(`${a.total - a.limit}Byte 초과`, 'danger') : chip(`남음 ${a.remaining}`, 'ok')),
       h('div', { class: 'bar big' }, h('span', { class: a.over ? 'bar-danger' : 'bar-ok', style: `width:${pct}%` })),
@@ -686,6 +690,49 @@ function finalCard(r: RecordEntry, st: Student) {
       !v.reviewValid ? reviewBtn : h('button', { class: 'btn ghost', onclick: async () => (await act('record.unreview', { recordId: r.id })) && S.render() }, '검토 해제'),
       h('button', { class: 'btn ghost', onclick: () => run(window.sgb.copyEdit(displayText(ta.value)), '편집용으로 복사했습니다(최종 본문 아님).') }, '편집용 복사'),
       h('button', { class: 'btn', disabled: !v.finalGate.ok, title: v.finalGate.ok ? '' : v.finalGate.reasons.join(' / '), onclick: () => run(window.sgb.copyFinal(r.id), '최종 본문을 복사했습니다.') }, icon('copy', 16), '최종 본문 복사'),
+    ),
+  );
+}
+
+/** 최종 본문·검토 단계 재윤문: 교사가 고친 최종 본문을 한 번 더 다듬어 받고, 비교해 채택하거나 닫는다. */
+function finalPolishPanel(r: RecordEntry, ta: HTMLTextAreaElement) {
+  const v = S.view!;
+  const p = r.polish?.basis === 'final' ? r.polish : null;
+  // 입력 중인 본문을 먼저 저장한 뒤 보낸다(입력란을 벗어나기 전에 단추를 눌러도 지금 글로 윤문한다).
+  const send = async (refine: boolean) => {
+    const cur = data().records.find((x) => x.id === r.id);
+    if (cur && ta.value !== cur.finalText && !(await act('record.setFinal', { recordId: r.id, finalText: ta.value }))) return;
+    await llmFlow(() => window.sgb.preparePolish(r.id, refine, 'final'), refine ? '분량 보정' : '최종 본문 재윤문');
+  };
+  const canSend = !!r.finalText.trim() && !!r.target && !S.busy;
+  const head = h('div', { class: 'inline' },
+    h('button', { class: 'btn secondary', disabled: !canSend, 'data-testid': 'final-repolish', onclick: () => void send(false) }, icon('spark', 16), p ? '최종 본문 다시 윤문' : '최종 본문 한 번 더 윤문'),
+    h('span', { class: 'muted' }, !r.target ? '목표 글자 수를 [최종 윤문] 탭에서 먼저 고르세요.' : !r.finalText.trim() ? '최종 본문을 먼저 입력하세요.' : '고친 표현·사실은 살리고 문장만 다시 다듬어 제안합니다. 채택하기 전에는 본문이 바뀌지 않습니다.'),
+  );
+  if (!p) return h('div', { class: 'final-repolish' }, head);
+  if (r.finalText === p.resultText) return h('div', { class: 'final-repolish' }, head, h('p', { class: 'hint ok-text' }, p.sourceText === r.finalText ? '재윤문 제안이 지금 최종 본문과 같습니다(고칠 곳을 찾지 못함).' : '재윤문 제안을 최종 본문에 채택했습니다.'));
+  const stale = p.sourceText !== r.finalText;
+  const n = charCount(p.resultText);
+  const remaining = Math.max(0, v.aggregation.remaining + measure(v.output.text).bytes);
+  const rg = polishRange(p.target, remaining);
+  return h('div', { class: 'final-repolish' },
+    head,
+    stale ? banner('warn', '재윤문을 요청한 뒤 최종 본문이 바뀌었습니다.', '오른쪽 제안은 이전 본문으로 만든 것입니다. 채택하면 지금 고친 내용이 사라지니 [최종 본문 다시 윤문]으로 새로 받으세요.') : null,
+    h('div', { class: 'compare' },
+      h('div', null, h('div', { class: 'compare-title' }, stale ? '지금 최종 본문 · 요청 뒤 바뀜' : '지금 최종 본문'), h('div', { class: 'compare-text' }, displayText(r.finalText)), meter(r.finalText)),
+      h('div', null, h('div', { class: 'compare-title' }, `재윤문 제안 · 목표 ${p.target}자`), h('div', { class: 'compare-text', 'data-testid': 'final-repolish-result' }, displayText(p.resultText)), meter(p.resultText),
+        h('span', { class: `chip ${n >= rg.min && n <= rg.max ? 'ok' : 'warn'}` }, `목표 대비 ${n - p.target >= 0 ? '+' : ''}${n - p.target}자`)),
+    ),
+    !stale && (n < rg.min || n > rg.max) ? banner('warn', `재윤문 결과가 ${n}자로 목표 범위(${rg.min}~${rg.max}자)를 벗어났습니다.`, '같은 본문으로 분량을 맞춰 다시 받을 수 있습니다(요청 1회 추가).',
+      h('div', { class: 'btn-row left tight' }, h('button', { class: 'btn secondary sm', disabled: !!S.busy, onclick: () => void send(true) }, icon('spark', 14), `분량 맞춰 다시 윤문 (${n < rg.min ? `+${rg.min - n}` : `-${n - rg.max}`}자)`))) : null,
+    p.suggestions.length ? h('div', null, h('b', null, 'AI 검토 제안(공식 판정 아님)'), h('ul', { class: 'suggest' }, p.suggestions.map((s) => h('li', null, displayText(s))))) : null,
+    findingsList(v.findings.polish),
+    h('div', { class: 'btn-row' },
+      h('button', { class: 'btn ghost', onclick: async () => (await act('record.dismissPolish', { recordId: r.id }, '재윤문 제안을 닫았습니다. 최종 본문은 그대로입니다.')) && S.render() }, '제안 닫기'),
+      h('button', { class: 'btn', onclick: async () => {
+        if (stale && !(await modal<boolean>('이전 본문으로 만든 제안입니다', (close) => h('div', null, h('p', null, '채택하면 재윤문을 요청한 뒤 최종 본문에서 고친 내용이 사라집니다. 그래도 채택할까요?'), h('div', { class: 'btn-row' }, h('button', { class: 'btn ghost', onclick: () => close(false) }, '취소'), h('button', { class: 'btn', onclick: () => close(true) }, '채택')))))) return;
+        if (await act('record.adoptPolish', { recordId: r.id }, '재윤문 제안을 최종 본문으로 옮겼습니다. 검토가 다시 필요합니다.')) S.render();
+      } }, '재윤문 제안 채택'),
     ),
   );
 }

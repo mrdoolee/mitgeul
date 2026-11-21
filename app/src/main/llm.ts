@@ -19,14 +19,16 @@ import {
   type Rubric,
 } from '../core/prompts';
 import { extractJson, parseCandidates, parsePolish } from '../core/responses';
-import { FREE_ITEM_ID, type AppData, type Provider, type RecordEntry, type Target } from '../core/schema';
+import { FREE_ITEM_ID, type AppData, type Effort, type PolishSource, type Provider, type RecordEntry, type Target } from '../core/schema';
 import { callProvider, ProviderError, type CallOptions, type CliRuntime } from './providers';
 
-/** 윤문 결과를 적용해도 되는지 판단하는 기준(초안·목표·관찰·행사·맥락) */
-function polishBasis(d: AppData, r: RecordEntry): string {
+/** 윤문 결과를 적용해도 되는지 판단하는 기준(초안·목표·관찰·행사·맥락, 최종 본문 재윤문이면 최종 본문도) */
+function polishBasis(d: AppData, r: RecordEntry, source: PolishSource = 'draft'): string {
   const ev = r.eventObs.map((e) => ({ e, def: d.events.find((x) => x.id === e.eventId) }));
-  return sha({ draft: r.draft, target: r.target, obs: r.observations, ev, ctx: r.context, free: r.freeNote });
+  return sha({ draft: r.draft, target: r.target, obs: r.observations, ev, ctx: r.context, free: r.freeNote, ...(source === 'final' ? { final: r.finalText } : {}) });
 }
+/** 윤문에 보내는 글 */
+const polishSourceText = (r: RecordEntry, source: PolishSource) => (source === 'final' ? r.finalText : r.draft);
 
 /** 저장된 학생 참조 표식({{학생:ID}})을 이름으로 되돌린 뒤 익명화한다. 영구 학생 ID가 외부로 나가지 않게 한다. */
 function markersToNames(text: string, d: AppData): string {
@@ -44,6 +46,8 @@ interface Pending {
   idMap: Record<string, string>;
   evidence: Record<string, string>;
   polishBasis?: string;
+  /** 윤문에 보낸 글(초안 또는 최종 본문) */
+  polishSource?: PolishSource;
   target?: Target;
   /** 윤문 분량 범위(공백 포함 글자 수). 하한에 못 미치면 자동으로 늘리기 요청을 한다. */
   range?: { min: number; max: number };
@@ -56,6 +60,8 @@ interface Pending {
   tokenMap: Map<string, string>;
   provider: Provider;
   model: string;
+  /** 준비 시점 설정의 추론 강도(CLI 제공자만). 없으면 CLI 기본값. */
+  effort?: Effort;
   createdAt: number;
   state: 'waiting' | 'sending' | 'cancelled';
   controller?: AbortController;
@@ -109,7 +115,7 @@ export class LlmService {
     return r;
   }
 
-  private async finalizePrepare(p: Omit<Pending, 'id' | 'createdAt' | 'state' | 'model'>, replaced: PreparedRequest['replaced']): Promise<PreparedRequest> {
+  private async finalizePrepare(p: Omit<Pending, 'id' | 'createdAt' | 'state' | 'model' | 'effort'>, replaced: PreparedRequest['replaced']): Promise<PreparedRequest> {
     const d = this.deps.getData();
     const payload = `${p.system}\n${p.user}`;
     if (/\{\{학생:/.test(payload)) throw new AnonymizationError('전송 문안에 학생 참조 표식이 남아 있습니다.');
@@ -118,10 +124,11 @@ export class LlmService {
     if (leftovers.length) throw new AnonymizationError(`전송 문안에 명단 이름이 남아 있습니다: ${leftovers.join(', ')}`);
     const chosen = d.settings.models[p.provider] ?? '';
     const { model, auto } = await this.deps.resolveModel(p.provider, chosen);
+    const effort = p.provider === 'gemini' ? undefined : d.settings.efforts?.[p.provider] || undefined;
     const id = randomUUID();
     // 같은 기록의 이전 대기 요청은 폐기한다.
     for (const [k, v] of this.pending) if (v.recordId === p.recordId && v.kind === p.kind && v.state === 'waiting') this.pending.delete(k);
-    this.pending.set(id, { ...p, model, id, createdAt: Date.now(), state: 'waiting' });
+    this.pending.set(id, { ...p, model, effort, id, createdAt: Date.now(), state: 'waiting' });
     const preview = previewText(p.system, p.user);
     return { requestId: id, kind: p.kind, provider: p.provider, model, autoModel: auto, preview, replaced, bytes: Buffer.byteLength(preview, 'utf8') };
   }
@@ -190,13 +197,17 @@ export class LlmService {
     );
   }
 
-  /** refine: 직전 윤문 결과가 분량 범위를 벗어났을 때 교사가 요청하는 분량 보정(직전 결과와 부족·초과 글자 수를 함께 보낸다). */
-  async preparePolish(recordId: string, refine = false): Promise<PreparedRequest> {
+  /**
+   * refine: 직전 윤문 결과가 분량 범위를 벗어났을 때 교사가 요청하는 분량 보정(직전 결과와 부족·초과 글자 수를 함께 보낸다).
+   * source: 'draft'는 영역 초안을, 'final'은 최종 본문·검토 단계에서 교사가 고친 최종 본문을 다시 윤문한다.
+   */
+  async preparePolish(recordId: string, refine = false, source: PolishSource = 'draft'): Promise<PreparedRequest> {
     const d = this.deps.getData();
     const r = this.record(d, recordId);
-    if (!r.draft.trim()) throw new Error('영역 초안을 먼저 취합하세요.');
-    if (!r.target) throw new Error('목표 글자 수(150/300/500자)를 선택하세요.');
     if (r.mode !== 'normal') throw new Error('사유 입력·기재 제외 기록은 윤문하지 않습니다.');
+    const text = polishSourceText(r, source);
+    if (!text.trim()) throw new Error(source === 'final' ? '최종 본문이 비어 있습니다.' : '영역 초안을 먼저 취합하세요.');
+    if (!r.target) throw new Error(source === 'final' ? '목표 글자 수(150/300/500자)를 [최종 윤문] 탭에서 먼저 고르세요.' : '목표 글자 수(150/300/500자)를 선택하세요.');
     const st = studentOf(d, r.studentId)!;
     const refs = workRefs(d, r.workId)!;
     const items = this.deps.rubric.areas[r.area].items;
@@ -225,8 +236,9 @@ export class LlmService {
       target: r.target,
       remainingBytes: remaining,
       limitLabel: agg.info.label,
-      draft: markersToNames(r.draft, d),
-      previous: refine && r.polish && r.polish.sourceText === r.draft && r.polish.target === r.target ? markersToNames(r.polish.resultText, d) : undefined,
+      draft: markersToNames(text, d),
+      previous: refine && r.polish && r.polish.basis === source && r.polish.sourceText === text && r.polish.target === r.target ? markersToNames(r.polish.resultText, d) : undefined,
+      fromFinal: source === 'final',
       evidence: evidence.map((e) => markersToNames(e, d)),
     });
     // 늘리기 요청용 자료: 초안 없이 근거만 준다(초안이 있으면 모델이 직전 결과를 그대로 되풀이하기 쉽다)
@@ -240,7 +252,8 @@ export class LlmService {
         itemIds: [],
         idMap: {},
         evidence: {},
-        polishBasis: polishBasis(d, r),
+        polishBasis: polishBasis(d, r, source),
+        polishSource: source,
         target: r.target,
         range: polishRange(r.target, remaining),
         expandBase: anon.texts[2]!,
@@ -274,6 +287,7 @@ export class LlmService {
       provider: p.provider,
       apiKey: p.provider === 'gemini' ? ((await this.deps.apiKey?.(p.provider)) ?? '') : undefined,
       model: p.model,
+      effort: p.effort,
       confirmed: { system: p.system, user: p.user, forbidden },
       schema: (p.kind === 'candidates' ? CANDIDATE_SCHEMA : POLISH_SCHEMA) as unknown as Record<string, unknown>,
       schemaName: p.kind === 'candidates' ? 'candidates' : 'polish',
@@ -296,7 +310,7 @@ export class LlmService {
           if (longer && ++shrinks > 2) break;
           if (p.state !== 'sending' || !this.pending.has(requestId)) break;
           const cur = this.deps.getData().records.find((x) => x.id === p.recordId);
-          if (!cur || polishBasis(this.deps.getData(), cur) !== p.polishBasis) break;
+          if (!cur || polishBasis(this.deps.getData(), cur, p.polishSource) !== p.polishBasis) break;
           const prev = polishRawText(best.text);
           const user = `${p.expandBase ?? p.user}\n\n${longer ? shrinkInstruction(prev, range) : expandInstruction(prev, range)}`;
           try {
@@ -328,7 +342,7 @@ export class LlmService {
         const prev = polishRawText(res.text);
         const hits = toneFindings(prev).map((f) => f.match);
         const cur = this.deps.getData().records.find((x) => x.id === p.recordId);
-        if (hits.length && cur && polishBasis(this.deps.getData(), cur) === p.polishBasis) {
+        if (hits.length && cur && polishBasis(this.deps.getData(), cur, p.polishSource) === p.polishBasis) {
           try {
             const next = await callProvider({ ...opts, confirmed: { ...opts.confirmed, user: `${p.expandBase ?? p.user}\n\n${toneInstruction(prev, hits, p.range)}` } });
             const nextText = polishRawText(next.text);
@@ -388,15 +402,16 @@ export class LlmService {
       if (!parsed.ok) return { applied, failed: { polish: parsed.error }, discarded, message: parsed.error };
       await this.deps.commit((d) => {
         const r = d.records.find((x) => x.id === p.recordId);
-        if (!r || polishBasis(d, r) !== p.polishBasis) {
+        if (!r || polishBasis(d, r, p.polishSource) !== p.polishBasis) {
           discarded.push('polish');
           return;
         }
-        r.polish = { sourceText: r.draft, resultText: parsed.text, suggestions: parsed.suggestions, target: p.target!, provider: p.provider, model, createdAt: nowIso() };
+        const source = p.polishSource ?? 'draft';
+        r.polish = { sourceText: polishSourceText(r, source), resultText: parsed.text, suggestions: parsed.suggestions, target: p.target!, provider: p.provider, model, createdAt: nowIso(), basis: source };
         r.updatedAt = nowIso();
         applied.push('polish');
       });
-      message = discarded.length ? '요청 뒤 초안·목표·근거가 바뀌어 윤문 결과를 적용하지 않았습니다. 다시 요청하세요.' : `윤문 제안을 받았습니다. 비교 후 채택하세요.${p.correctionNote ? ` ${p.correctionNote}` : ''}`;
+      message = discarded.length ? `요청 뒤 ${p.polishSource === 'final' ? '최종 본문·' : ''}초안·목표·근거가 바뀌어 윤문 결과를 적용하지 않았습니다. 다시 요청하세요.` : `윤문 제안을 받았습니다. 비교 후 채택하세요.${p.correctionNote ? ` ${p.correctionNote}` : ''}`;
     }
     return { applied, failed, discarded, message };
   }
